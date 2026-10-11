@@ -1382,66 +1382,72 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   };
 
   // Comprehensive Webhook Information & Documentation Specification
-  const getWebhookEndpointsDoc = () => ({
-    success: true,
-    service: 'Get Set Flight CRM & Neon Cloud Webhook Hub',
-    database: 'Live Neon Cloud PostgreSQL + Instant Local Sync',
-    webhooks: {
-      siteBookings: {
-        description: 'Receives flight search inquiries, leads, and booking requests from any website form',
-        methods: ['POST', 'GET'],
-        endpoint: '/api/public/webhook/site-bookings',
-        aliases: [
-          '/api/public/webhook/booking',
-          '/api/public/webhook/capture',
-          '/api/public/site-bookings'
-        ],
-        contentType: ['application/json', 'multipart/form-data', 'application/x-www-form-urlencoded'],
-        samplePayload: {
-          name: 'Sarah Connor',
-          email: 'sarah@example.com',
-          phone: '+1 416 555 0199',
-          origin: 'YYZ (Toronto)',
-          destination: 'LHR (London)',
-          departDate: '2026-11-20',
-          returnDate: '2026-12-05',
-          cabin: 'Economy',
-          adults: 2,
-          children: 1,
-          infants: 0,
-          tripType: 'Round Trip',
-          company: 'Get Set Flight',
-          source: 'Website Header Search Form'
-        }
-      },
-      paymentAuthorizations: {
-        description: 'Receives credit card authorizations, digital signatures, and signed LOA certificates',
-        methods: ['POST'],
-        endpoint: '/api/public/webhook/payment-authorizations',
-        aliases: [
-          '/api/public/webhook/payment',
-          '/api/public/payment-authorizations'
-        ],
-        contentType: ['application/json', 'multipart/form-data'],
-        samplePayload: {
-          clientName: 'James Wilson',
-          email: 'james@example.com',
-          phone: '+1 212 555 4321',
-          amount: '1850.00',
-          currency: 'CAD',
-          cardBrand: 'Visa',
-          cardNumber: '4532111122223333',
-          maskedCardNumber: '4532 **** **** 3333',
-          cvv: '123',
-          expiryDate: '10/28',
-          reservationNumber: 'GSF-CAN-4921',
-          billingAddress: '77 King Street West, Suite 400, Toronto, ON M5K 1H1',
-          cardholderSignature: 'data:image/png;base64,...',
-          company: 'Get Set Flight'
+  const getWebhookEndpointsDoc = () => {
+    const base = 'https://getsetflightcrm.netlify.app';
+    return {
+      success: true,
+      service: 'Get Set Flight CRM & Neon Cloud Webhook Hub',
+      domain: base,
+      database: 'Live Neon Cloud PostgreSQL + Instant Local Sync',
+      webhooks: {
+        siteBookings: {
+          description: 'Receives flight search inquiries, leads, and booking requests from any website form',
+          methods: ['POST', 'GET'],
+          primaryEndpoint: `${base}/api/public/webhook/site-bookings`,
+          aliases: [
+            `${base}/api/public/webhook/booking`,
+            `${base}/api/public/webhook/capture`,
+            `${base}/api/public/webhook/lead`,
+            `${base}/api/public/site-bookings`,
+            `${base}/api/webhook/site-bookings`
+          ],
+          contentType: ['application/json', 'multipart/form-data', 'application/x-www-form-urlencoded'],
+          samplePayload: {
+            name: 'Sarah Connor',
+            email: 'sarah@example.com',
+            phone: '+1 416 555 0199',
+            origin: 'YYZ (Toronto)',
+            destination: 'LHR (London)',
+            departDate: '2026-11-20',
+            returnDate: '2026-12-05',
+            cabin: 'Economy',
+            adults: 2,
+            children: 1,
+            infants: 0,
+            tripType: 'Round Trip',
+            company: 'Get Set Flight',
+            source: 'Website Header Search Form'
+          }
+        },
+        paymentAuthorizations: {
+          description: 'Receives credit card authorizations, digital signatures, and signed LOA certificates',
+          methods: ['POST'],
+          primaryEndpoint: `${base}/api/public/webhook/payment-authorizations`,
+          aliases: [
+            `${base}/api/public/webhook/payment`,
+            `${base}/api/public/payment-authorizations`,
+            `${base}/api/webhook/payment-authorizations`
+          ],
+          contentType: ['application/json', 'multipart/form-data'],
+          samplePayload: {
+            clientName: 'James Wilson',
+            email: 'james@example.com',
+            phone: '+1 212 555 4321',
+            amount: '1850.00',
+            currency: 'CAD',
+            cardBrand: 'Visa',
+            cardNumber: '4532111122223333',
+            maskedCardNumber: '4532 **** **** 3333',
+            cvv: '123',
+            expiryDate: '10/28',
+            reservationNumber: 'GSF-CAN-4921',
+            billingAddress: '77 King Street West, Suite 400, Toronto, ON M5K 1H1',
+            company: 'Get Set Flight'
+          }
         }
       }
-    }
-  });
+    };
+  };
 
   // Dedicated Site Bookings Webhook Endpoints
   app.post('/api/public/webhook/site-bookings', handleWebhookLeadCapture);

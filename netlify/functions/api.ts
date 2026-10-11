@@ -598,35 +598,70 @@ const handleWebhookLeadCapture = async (c: any) => {
 };
 
 // Webhook Documentation endpoint
-const getWebhookEndpointsDoc = () => ({
-  success: true,
-  service: 'Get Set Flight CRM & Neon Cloud Webhook Hub',
-  database: 'Live Neon Cloud PostgreSQL',
-  webhooks: {
-    siteBookings: {
-      description: 'Receives flight search inquiries, leads, and booking requests from any website form',
-      methods: ['POST', 'GET'],
-      endpoints: [
-        '/api/public/webhook/site-bookings',
-        '/api/public/webhook/booking',
-        '/api/public/webhook/capture',
-        '/api/public/webhook/lead',
-        '/api/public/site-bookings',
-        '/api/webhook/site-bookings'
-      ]
-    },
-    paymentAuthorizations: {
-      description: 'Receives credit card authorizations, digital signatures, and signed LOA certificates',
-      methods: ['POST'],
-      endpoints: [
-        '/api/public/webhook/payment-authorizations',
-        '/api/public/webhook/payment',
-        '/api/public/payment-authorizations',
-        '/api/webhook/payment-authorizations'
-      ]
+const getWebhookEndpointsDoc = (origin?: string) => {
+  const base = origin || 'https://getsetflightcrm.netlify.app';
+  return {
+    success: true,
+    service: 'Get Set Flight CRM & Neon Cloud Webhook Hub',
+    domain: base,
+    database: 'Live Neon Cloud PostgreSQL',
+    webhooks: {
+      siteBookings: {
+        description: 'Receives flight search inquiries, leads, and booking requests from any website form',
+        methods: ['POST', 'GET'],
+        primaryEndpoint: `${base}/api/public/webhook/site-bookings`,
+        aliases: [
+          `${base}/api/public/webhook/booking`,
+          `${base}/api/public/webhook/capture`,
+          `${base}/api/public/webhook/lead`,
+          `${base}/api/public/site-bookings`,
+          `${base}/api/webhook/site-bookings`
+        ],
+        samplePayload: {
+          name: 'Sarah Connor',
+          email: 'sarah@example.com',
+          phone: '+1 416 555 0199',
+          origin: 'YYZ (Toronto)',
+          destination: 'LHR (London)',
+          departDate: '2026-11-20',
+          returnDate: '2026-12-05',
+          cabin: 'Economy',
+          adults: 2,
+          children: 1,
+          infants: 0,
+          tripType: 'Round Trip',
+          company: 'Get Set Flight',
+          source: 'Website Header Search Form'
+        }
+      },
+      paymentAuthorizations: {
+        description: 'Receives credit card authorizations, digital signatures, and signed LOA certificates',
+        methods: ['POST'],
+        primaryEndpoint: `${base}/api/public/webhook/payment-authorizations`,
+        aliases: [
+          `${base}/api/public/webhook/payment`,
+          `${base}/api/public/payment-authorizations`,
+          `${base}/api/webhook/payment-authorizations`
+        ],
+        samplePayload: {
+          clientName: 'James Wilson',
+          email: 'james@example.com',
+          phone: '+1 212 555 4321',
+          amount: '1850.00',
+          currency: 'CAD',
+          cardBrand: 'Visa',
+          cardNumber: '4532111122223333',
+          maskedCardNumber: '4532 **** **** 3333',
+          cvv: '123',
+          expiryDate: '10/28',
+          reservationNumber: 'GSF-CAN-4921',
+          billingAddress: '77 King Street West, Suite 400, Toronto, ON M5K 1H1',
+          company: 'Get Set Flight'
+        }
+      }
     }
-  }
-});
+  };
+};
 
 // Dedicated Webhook Endpoints (both /public/webhook/* and /webhook/*)
 api.post('/public/webhook/site-bookings', handleWebhookLeadCapture);
@@ -637,8 +672,8 @@ api.get('/public/webhook/capture', handleWebhookLeadCapture);
 api.post('/public/webhook/lead', handleWebhookLeadCapture);
 api.post('/public/webhook/payment-authorizations', handleWebhookLeadCapture);
 api.post('/public/webhook/payment', handleWebhookLeadCapture);
-api.get('/public/webhook/info', (c) => c.json(getWebhookEndpointsDoc()));
-api.get('/public/webhook/endpoints', (c) => c.json(getWebhookEndpointsDoc()));
+api.get('/public/webhook/info', (c) => c.json(getWebhookEndpointsDoc(c.req.header('origin'))));
+api.get('/public/webhook/endpoints', (c) => c.json(getWebhookEndpointsDoc(c.req.header('origin'))));
 
 api.post('/webhook/site-bookings', handleWebhookLeadCapture);
 api.get('/webhook/site-bookings', handleWebhookLeadCapture);
@@ -648,8 +683,8 @@ api.get('/webhook/capture', handleWebhookLeadCapture);
 api.post('/webhook/lead', handleWebhookLeadCapture);
 api.post('/webhook/payment-authorizations', handleWebhookLeadCapture);
 api.post('/webhook/payment', handleWebhookLeadCapture);
-api.get('/webhook/info', (c) => c.json(getWebhookEndpointsDoc()));
-api.get('/webhook/endpoints', (c) => c.json(getWebhookEndpointsDoc()));
+api.get('/webhook/info', (c) => c.json(getWebhookEndpointsDoc(c.req.header('origin'))));
+api.get('/webhook/endpoints', (c) => c.json(getWebhookEndpointsDoc(c.req.header('origin'))));
 
 api.post('/public/site-bookings', handleWebhookLeadCapture);
 
