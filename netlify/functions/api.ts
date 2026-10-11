@@ -24,7 +24,7 @@ const BREVO_REPLY_TO = { name: "Get Set Flight", email: process.env.BREVO_REPLY_
 const BREVO_CC = [{ email: "officialtraveloboom@gmail.com", name: "Operations Team" }];
 
 // Global CORS Middleware
-api.use('*', async (c, next) => {
+const corsMiddleware = async (c: any, next: any) => {
   c.header('Access-Control-Allow-Origin', '*');
   c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
@@ -33,7 +33,9 @@ api.use('*', async (c, next) => {
     return c.text('', 204);
   }
   await next();
-});
+};
+app.use('*', corsMiddleware);
+api.use('*', corsMiddleware);
 
 // Helper: send Brevo email
 async function sendBrevoEmail(to: string, subject: string, htmlContent: string, skipCc = false) {
@@ -953,9 +955,10 @@ api.get('/public/check-email', async (c) => {
   }
 });
 
-// Mount routes on /api and /.netlify/functions/api
+// Mount routes on /api, /.netlify/functions/api, and /
 app.route('/api', api);
 app.route('/.netlify/functions/api', api);
+app.route('/', api);
 
 // Export Netlify AWS Lambda handler
 export const handler = handle(app);
