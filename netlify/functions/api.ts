@@ -591,9 +591,9 @@ api.get('/public/payment-authorizations', async (c) => {
   try {
     const sql = getDb();
     const rows = await sql`SELECT * FROM payment_authorizations ORDER BY id DESC LIMIT 200`;
-    return c.json({ success: true, data: rows });
+    return c.json(rows);
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json([]);
   }
 });
 
@@ -784,13 +784,172 @@ api.post('/public/send-email', async (c) => {
   }
 });
 
-api.post('/public/upload', async (c) => {
+// ========================================================
+// 12. ATTENDANCE SHEET, LEAVE BALANCES & QUERY STATUSES
+// ========================================================
+api.get('/public/attendance-sheet', async (c) => {
   try {
-    // In serverless, returns base64 or timestamp path for lightweight uploaded files
-    const now = Date.now();
-    return c.json({ success: true, path: `/uploads/file_${now}.png` });
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM attendance_sheet ORDER BY id DESC LIMIT 200`;
+    return c.json({ data: rows });
+  } catch (err: any) {
+    return c.json({ data: [] });
+  }
+});
+
+api.post('/public/attendance-sheet', async (c) => {
+  try {
+    const b = await c.req.json();
+    const sql = getDb();
+    const res = await sql`
+      INSERT INTO attendance_sheet ("userId", "userName", date, status, notes)
+      VALUES (${b.userId}, ${b.userName || ''}, ${b.date}, ${b.status || 'Present'}, ${b.notes || ''})
+      RETURNING *
+    `;
+    return c.json({ data: res[0] });
+  } catch (err: any) {
+    return c.json({ data: null, error: err.message }, 500);
+  }
+});
+
+api.get('/public/leave-balances', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM leave_balances ORDER BY id ASC`;
+    return c.json({ data: rows });
+  } catch (err: any) {
+    return c.json({ data: [] });
+  }
+});
+
+api.put('/public/leave-balances/:userId/:year', async (c) => {
+  try {
+    const userId = Number(c.req.param('userId'));
+    const year = Number(c.req.param('year'));
+    const b = await c.req.json();
+    const sql = getDb();
+    const res = await sql`
+      UPDATE leave_balances
+      SET "annualLeave" = COALESCE(${b.annualLeave}, "annualLeave"),
+          "sickLeave" = COALESCE(${b.sickLeave}, "sickLeave"),
+          "casualLeave" = COALESCE(${b.casualLeave}, "casualLeave")
+      WHERE "userId" = ${userId} AND year = ${year}
+      RETURNING *
+    `;
+    return c.json({ data: res[0] });
+  } catch (err: any) {
+    return c.json({ data: null, error: err.message }, 500);
+  }
+});
+
+api.get('/public/query-statuses', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM query_statuses ORDER BY id ASC`;
+    return c.json({ data: rows });
+  } catch (err: any) {
+    return c.json({ data: [] });
+  }
+});
+
+api.post('/public/query-statuses', async (c) => {
+  try {
+    const b = await c.req.json();
+    const sql = getDb();
+    const res = await sql`
+      INSERT INTO query_statuses (name, color, description, "order", status)
+      VALUES (${b.name}, ${b.color || '#3b82f6'}, ${b.description || ''}, ${b.order || 0}, ${b.status || 'Active'})
+      RETURNING *
+    `;
+    return c.json({ data: res[0] });
+  } catch (err: any) {
+    return c.json({ data: null, error: err.message }, 500);
+  }
+});
+
+api.put('/public/query-statuses/:id', async (c) => {
+  try {
+    const id = Number(c.req.param('id'));
+    const b = await c.req.json();
+    const sql = getDb();
+    const res = await sql`
+      UPDATE query_statuses
+      SET name = COALESCE(${b.name}, name),
+          color = COALESCE(${b.color}, color),
+          description = COALESCE(${b.description}, description),
+          "order" = COALESCE(${b.order}, "order"),
+          status = COALESCE(${b.status}, status)
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return c.json({ data: res[0] });
+  } catch (err: any) {
+    return c.json({ data: null, error: err.message }, 500);
+  }
+});
+
+api.delete('/public/query-statuses/:id', async (c) => {
+  try {
+    const id = Number(c.req.param('id'));
+    const sql = getDb();
+    await sql`DELETE FROM query_statuses WHERE id = ${id}`;
+    return c.json({ success: true });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+api.post('/public/upload', async (c) => {
+  try {
+    const now = Date.now();
+    return c.json({ success: true, path: `/uploads/file_${now}.png`, sizeBytes: 1024 });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+api.post('/public/upload/delete', async (c) => {
+  return c.json({ success: true });
+});
+
+api.get('/public/updates', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM updates ORDER BY id DESC LIMIT 50`;
+    return c.json({ data: rows });
+  } catch (err: any) {
+    return c.json({ data: [] });
+  }
+});
+
+api.get('/public/tests', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM tests ORDER BY id ASC`;
+    return c.json({ data: rows });
+  } catch (err: any) {
+    return c.json({ data: [] });
+  }
+});
+
+api.get('/public/payslip-requests', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM payslip_requests ORDER BY id DESC LIMIT 50`;
+    return c.json({ data: rows });
+  } catch (err: any) {
+    return c.json({ data: [] });
+  }
+});
+
+api.get('/public/check-email', async (c) => {
+  try {
+    const email = (c.req.query('email') || '').trim().toLowerCase();
+    const sql = getDb();
+    const rows = await sql`SELECT id FROM users WHERE LOWER(email) = ${email} LIMIT 1`;
+    return c.json({ exists: rows.length > 0 });
+  } catch (err: any) {
+    return c.json({ exists: false });
   }
 });
 

@@ -150,7 +150,7 @@ export default function PaymentAuthorizations() {
       const res = await client.api.fetch('/api/public/payment-authorizations');
       if (res.ok) {
         const data = await res.json();
-        const validList = Array.isArray(data) ? data : [];
+        const validList = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
         setRecords(validList);
         try {
           localStorage.setItem('cached_payment_authorizations', JSON.stringify(validList));

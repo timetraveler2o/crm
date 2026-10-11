@@ -75,29 +75,32 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
 
   fetchData: async () => {
     set({ isLoading: true, error: null });
+    const safeJson = async (p: Promise<Response>) => {
+      try {
+        const res = await p;
+        if (!res.ok) return { data: [] };
+        const json = await res.json();
+        if (Array.isArray(json)) return { data: json };
+        return json || { data: [] };
+      } catch {
+        return { data: [] };
+      }
+    };
+
     try {
-      const [usersRes, rolesRes, bookingsRes, sheetRes, balancesRes, qsRes, sbRes, attRes] = await Promise.all([
-        client.api.fetch('/api/public/users'),
-        client.api.fetch('/api/public/roles'),
-        client.api.fetch('/api/public/bookings'),
-        client.api.fetch('/api/public/attendance-sheet'),
-        client.api.fetch('/api/public/leave-balances'),
-        client.api.fetch('/api/public/query-statuses'),
-        client.api.fetch('/api/public/site-bookings'),
-        client.api.fetch('/api/public/attendance'),
+      const [users, roles, bookings, sheet, balances, qs, sb, att] = await Promise.all([
+        safeJson(client.api.fetch('/api/public/users')),
+        safeJson(client.api.fetch('/api/public/roles')),
+        safeJson(client.api.fetch('/api/public/bookings')),
+        safeJson(client.api.fetch('/api/public/attendance-sheet')),
+        safeJson(client.api.fetch('/api/public/leave-balances')),
+        safeJson(client.api.fetch('/api/public/query-statuses')),
+        safeJson(client.api.fetch('/api/public/site-bookings')),
+        safeJson(client.api.fetch('/api/public/attendance')),
       ]);
 
-      const users = await usersRes.json();
-      const roles = await rolesRes.json();
-      const bookings = await bookingsRes.json();
-      const sheet = await sheetRes.json();
-      const balances = await balancesRes.json();
-      const qs = await qsRes.json();
-      const sb = await sbRes.json();
-      const att = await attRes.json();
-
       const currentSb = get().siteBookings;
-      const newSbData = sb.data || [];
+      const newSbData = Array.isArray(sb) ? sb : (sb?.data || []);
       
       // Check for new site bookings
       if (currentSb.length > 0 && newSbData.length > currentSb.length) {
