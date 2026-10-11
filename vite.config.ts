@@ -18,6 +18,9 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    include: ["react-is", "recharts"],
+  },
   build: {
     sourcemap: false,
   },
