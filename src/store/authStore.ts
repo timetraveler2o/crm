@@ -77,19 +77,25 @@ export const useAuthStore = create<AuthState>()(
             body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword })
           });
           
-          const data = await res.json();
+          let data: any = {};
+          try {
+            data = await res.json();
+          } catch {
+            set({ isChecking: false });
+            return { success: false, message: 'Server connection error. Please try again.' } as any;
+          }
           
           if (!res.ok || !data.success) {
             console.error('Login failed:', data.message || 'Unknown error');
             set({ isChecking: false });
-            return false;
+            return { success: false, message: data.message || 'Invalid email or password' } as any;
           }
 
           // Block inactive users from logging in
           if (data.user?.status === 'Inactive') {
             console.error('Login blocked: User account is inactive');
             set({ isChecking: false });
-            return false;
+            return { success: false, message: 'Account is inactive. Please contact administrator.' } as any;
           }
 
           const userCompany = getCompanyFromEmail(data.user.email);

@@ -5,12 +5,15 @@ import { neon } from '@neondatabase/serverless';
 const app = new Hono();
 const api = new Hono();
 
-// Helper to get Neon DB client with zero-failure fallback
+// Neon Cloud Database Connection
+const DB_HOST = "ep-odd-hat-b4bwqvtu-pooler.c-6.us-east-2.aws.neon.tech";
+const DB_USER = "neondb_owner";
+const DB_PASS = "npg_fnBYaZwdx0u5";
+const DB_NAME = "neondb";
+const DEFAULT_DATABASE_URL = `postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}/${DB_NAME}?sslmode=require&channel_binding=require`;
+
 function getDb() {
-  const url = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
-  if (!url) {
-    throw new Error('DATABASE_URL is missing. Please add it to Netlify Environment Variables.');
-  }
+  const url = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || DEFAULT_DATABASE_URL;
   return neon(url);
 }
 
@@ -103,14 +106,21 @@ api.post('/public/login', async (c) => {
     }
 
     const sql = getDb();
-    const rows = await sql`SELECT * FROM users WHERE LOWER(email) = ${email} LIMIT 1`;
+    const rows = await sql`
+      SELECT * FROM users 
+      WHERE LOWER(email) = ${email} 
+      ORDER BY (password IS NOT NULL) DESC, id ASC 
+      LIMIT 1
+    `;
     const user: any = rows[0];
 
     if (!user) {
       return c.json({ success: false, message: 'Invalid email or password' }, 401);
     }
 
-    if (user.password && user.password !== password) {
+    const dbPass = (user.password || '').trim();
+    const match = dbPass === password || dbPass.toLowerCase() === password.toLowerCase();
+    if (!match) {
       return c.json({ success: false, message: 'Invalid email or password' }, 401);
     }
 

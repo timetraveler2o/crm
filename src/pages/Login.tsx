@@ -79,8 +79,9 @@ export default function Login() {
     setError('');
 
     try {
-      const success = await login(email.trim(), password);
-      if (success) {
+      const result: any = await login(email.trim(), password);
+      const isSuccess = typeof result === 'boolean' ? result : (result === true || result?.success === true);
+      if (isSuccess) {
         if (rememberMe) {
           localStorage.setItem('gsf_remembered_email', email.trim());
         } else {
@@ -88,7 +89,10 @@ export default function Login() {
         }
         navigate('/dashboard', { replace: true });
       } else {
-        setError('Invalid email or password. If your account is inactive, please contact your administrator.');
+        const errorMsg = (typeof result === 'object' && result?.message)
+          ? result.message
+          : 'Invalid email or password. If your account is inactive, please contact your administrator.';
+        setError(errorMsg);
       }
     } catch (err: any) {
       console.error('Login error:', err);
