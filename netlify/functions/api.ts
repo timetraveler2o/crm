@@ -362,80 +362,296 @@ api.get('/public/site-bookings', async (c) => {
   }
 });
 
-// Website Lead Webhook Endpoint
-api.post('/webhook/site-bookings', async (c) => {
+// Universal Webhook Lead & Payment Capture Engine
+const handleWebhookLeadCapture = async (c: any) => {
   try {
-    const body = await c.req.json();
-    const sql = getDb();
-    const queryId = body.queryId || `WEB-${Date.now().toString().slice(-6)}`;
+    let rawData: any = {};
+    const method = c.req.method;
+
+    if (method === 'GET') {
+      rawData = c.req.query();
+    } else {
+      try {
+        rawData = await c.req.json();
+      } catch {
+        try {
+          rawData = await c.req.parseBody();
+        } catch {
+          try {
+            const text = await c.req.text();
+            try {
+              rawData = JSON.parse(text);
+            } catch {
+              const sp = new URLSearchParams(text);
+              rawData = Object.fromEntries(sp.entries());
+            }
+          } catch {
+            rawData = {};
+          }
+        }
+      }
+    }
+
+    const email = (rawData.email || rawData.clientEmail || rawData.contact_email || '').trim().toLowerCase();
+    const source = (rawData.source || rawData.site || rawData.website || 'Website Webhook').trim();
+
+    let company = rawData.company || 'Get Set Flight';
+    if (email.includes('@lookbookticket.com') || source.toLowerCase().includes('lookbook')) {
+      company = 'Look Book Ticket';
+    } else if (email.includes('@traveloboom.com') || source.toLowerCase().includes('traveloboom')) {
+      company = 'Traveloboom';
+    }
+
+    const prefix = company === 'Look Book Ticket' ? 'LBT' : (company === 'Traveloboom' ? 'TBM' : 'GSF');
+    const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const timestamp = Date.now().toString().slice(-4);
+    const queryId = rawData.queryId || `${prefix}-${datePart}-${timestamp}`;
     const now = new Date().toISOString();
 
-    const inserted = await sql`
+    const isPaymentAuth =
+      rawData.type === 'payment_authorization' ||
+      !!rawData.maskedCardNumber ||
+      !!rawData.cardNumber ||
+      !!rawData.certificate_html ||
+      !!rawData.certificateHtml ||
+      !!rawData.pdf_base64 ||
+      !!rawData.pdfBase64 ||
+      (!!rawData.amount && (!!rawData.cardBrand || !!rawData.reservationNumber));
+
+    const sql = getDb();
+
+    if (isPaymentAuth) {
+      const clientName = (rawData.clientName || rawData.name || `${rawData.firstName || ''} ${rawData.lastName || ''}`).trim() || 'Payment Client';
+      const firstName = rawData.firstName || '';
+      const lastName = rawData.lastName || '';
+      const amount = rawData.amount ? String(rawData.amount).trim() : '0';
+      const currency = rawData.currency || 'CAD';
+      const cardBrand = rawData.cardBrand || '';
+      const cardNumber = rawData.cardNumber || rawData.number || '';
+      const maskedCardNumber = rawData.maskedCardNumber || (cardNumber ? cardNumber.slice(0, 4) + ' **** **** ' + cardNumber.slice(-4) : '');
+      const cvv = rawData.cvv || '';
+      const expiryDate = rawData.expiryDate || rawData.expiry_date || '';
+      const reservationNumber = rawData.reservationNumber || '';
+      const billingAddress = rawData.billingAddress || '';
+      const certificateHtml = rawData.certificate_html || rawData.certificateHtml || '';
+      const pdfBase64 = rawData.pdf_base64 || rawData.pdfBase64 || '';
+      const selfieImage = rawData.selfieImage || '';
+      const token = rawData.token || `auth_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const notes = rawData.notes || `Payment of ${amount} ${currency} authorized on ${cardBrand} (${maskedCardNumber})`;
+      const phone = (rawData.phone || rawData.mobile || rawData.phoneNumber || rawData.contact_phone || '').trim();
+
+      const payRows = await sql`
+        INSERT INTO payment_authorizations (
+          "queryId", token, "clientName", "firstName", "lastName", email, phone,
+          amount, currency, "paymentType", "cardBrand", "maskedCardNumber", "cardNumber",
+          cvv, "expiryDate", "reservationNumber", "billingAddress", "certificateHtml",
+          "pdfBase64", "pdfUrl", "selfieImage", "insuranceSignature", "cardholderSignature",
+          "ipAddress", "userAgent", status, company, notes, created, modified
+        ) VALUES (
+          ${queryId}, ${token}, ${clientName}, ${firstName}, ${lastName}, ${email}, ${phone},
+          ${amount}, ${currency}, ${rawData.paymentType || 'Credit Card'}, ${cardBrand}, ${maskedCardNumber}, ${cardNumber},
+          ${cvv}, ${expiryDate}, ${reservationNumber}, ${billingAddress}, ${certificateHtml},
+          ${pdfBase64}, ${rawData.pdfUrl || ''}, ${selfieImage}, ${rawData.insuranceSignature || ''}, ${rawData.cardholderSignature || ''},
+          ${rawData.ipAddress || ''}, ${rawData.userAgent || ''}, ${'Payment Authorized'}, ${company}, ${notes}, ${now}, ${now}
+        )
+        RETURNING *
+      `;
+
+      // Create live CRM notification in Neon
+      await sql`
+        INSERT INTO crm_notifications ("targetRole", title, message, type, "queryId", "isRead", created, company, "createdBy")
+        VALUES (
+          'all',
+          ${`💳 Payment Authorized: ${currency} ${amount}`},
+          ${`${clientName} authorized ${currency} ${amount} on ${cardBrand} (${maskedCardNumber}) for PNR/Res: ${reservationNumber || queryId}`},
+          'success',
+          ${queryId},
+          0,
+          ${now},
+          ${company},
+          'Payment Authorization Webhook'
+        )
+      `;
+
+      if (email && email.includes('@')) {
+        const emailSubject = `💳 Payment Authorization Confirmed [${reservationNumber || queryId}]: ${currency} ${amount}`;
+        const emailHtml = `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+          <div style="background:linear-gradient(135deg,#059669,#047857);color:white;padding:24px;text-align:center">
+            <h1 style="margin:0;font-size:22px;">💳 Payment Authorized</h1>
+            <p style="margin:6px 0 0;font-size:13px;opacity:0.85">Reference: <strong>${reservationNumber || queryId}</strong></p>
+          </div>
+          <div style="padding:28px;background:#ffffff;color:#334155;line-height:1.6">
+            <p style="margin-top:0">Dear <strong>${clientName}</strong>,</p>
+            <p>Your payment authorization of <strong>${currency} ${amount}</strong> on card ending in <strong>${maskedCardNumber.slice(-4) || '****'}</strong> has been securely received.</p>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin:20px 0">
+              <table style="width:100%;font-size:14px;border-collapse:collapse">
+                <tr><td style="padding:4px 0;color:#64748b">Amount:</td><td style="font-weight:600">${currency} ${amount}</td></tr>
+                <tr><td style="padding:4px 0;color:#64748b">Card:</td><td style="font-weight:600">${cardBrand} (${maskedCardNumber})</td></tr>
+                <tr><td style="padding:4px 0;color:#64748b">Reservation/PNR:</td><td style="font-weight:600">${reservationNumber || 'N/A'}</td></tr>
+              </table>
+            </div>
+            <p style="margin-bottom:0">Warm regards,<br><strong>${company} Billing Desk</strong></p>
+          </div>
+        </div>`;
+        sendBrevoEmail(email, emailSubject, emailHtml).catch(() => {});
+      }
+
+      return c.json({
+        success: true,
+        message: 'Payment authorization captured successfully',
+        queryId,
+        company,
+        data: payRows[0]
+      }, 201);
+    }
+
+    // Lead / Site Booking
+    const name = (rawData.name || rawData.fullName || rawData.customer_name || `${rawData.firstName || ''} ${rawData.lastName || ''}`).trim() || 'Website Visitor';
+    const phone = (rawData.phone || rawData.mobile || rawData.phoneNumber || rawData.contact_phone || '').trim();
+    const origin = (rawData.origin || rawData.from || rawData.departureCity || rawData.departure_airport || '').trim().toUpperCase();
+    const destination = (rawData.destination || rawData.to || rawData.arrivalCity || rawData.arrival_airport || '').trim().toUpperCase();
+    const departDate = (rawData.departDate || rawData.departureDate || rawData.travelDate || rawData.date || '').trim();
+    const returnDate = (rawData.returnDate || rawData.return_date || '').trim();
+    const cabin = (rawData.cabin || rawData.cabinClass || rawData.class || 'Economy').trim();
+    const adults = Number(rawData.adults || rawData.pax || 1);
+    const children = Number(rawData.children || 0);
+    const infants = Number(rawData.infants || 0);
+    const tripType = (rawData.tripType || rawData.trip_type || (returnDate ? 'Round Trip' : 'One Way')).trim();
+    const travelDates = returnDate ? `${departDate} to ${returnDate}` : departDate;
+
+    const sbRows = await sql`
       INSERT INTO site_bookings (
         "queryId", name, email, phone, origin, destination, "travelDates",
         assignment, created, adults, children, infants, "cabinClass",
-        passengers, "departDate", status, source, modified, company
+        passengers, "departDate", status, source, modified, company,
+        trip_type, cabin, departure_date, return_date, raw_data
       ) VALUES (
-        ${queryId}, ${body.name || body.fullName || ''}, ${body.email || ''}, ${body.phone || ''},
-        ${body.origin || body.from || ''}, ${body.destination || body.to || ''}, ${body.travelDates || ''},
-        ${body.assignment || 'Unassigned'}, ${now}, ${body.adults || 1}, ${body.children || 0}, ${body.infants || 0},
-        ${body.cabinClass || body.cabin || 'Economy'}, ${body.passengers || 1}, ${body.departDate || ''},
-        ${body.status || 'New'}, ${body.source || 'Website Webhook'}, ${now}, ${body.company || 'Get Set Flight'}
+        ${queryId}, ${name}, ${email}, ${phone}, ${origin}, ${destination}, ${travelDates},
+        'Unassigned', ${now}, ${adults}, ${children}, ${infants}, ${cabin},
+        ${adults + children + infants}, ${departDate}, 'New', ${source}, ${now}, ${company},
+        ${tripType}, ${cabin}, ${departDate}, ${returnDate}, ${JSON.stringify(rawData)}
       )
       ON CONFLICT ("queryId") DO UPDATE SET
         name = EXCLUDED.name,
         email = EXCLUDED.email,
         phone = EXCLUDED.phone,
+        origin = EXCLUDED.origin,
+        destination = EXCLUDED.destination,
         status = EXCLUDED.status,
         modified = EXCLUDED.modified
       RETURNING *
     `;
 
-    // Real-time notification in CRM
+    // Create live CRM notification in Neon
     await sql`
-      INSERT INTO crm_notifications ("targetRole", title, message, type, "queryId", "isRead", created, company)
+      INSERT INTO crm_notifications ("targetRole", title, message, type, "queryId", "isRead", created, company, "createdBy")
       VALUES (
         'all',
-        'New Website Booking Received',
-        ${`Lead #${queryId} from ${body.name || 'Website'} (${body.origin || ''} -> ${body.destination || ''})`},
+        ${`✈️ New Webhook Lead: ${queryId}`},
+        ${`${name} requested ${origin || 'City'} ➔ ${destination || 'City'} (${cabin}) via ${source}`},
         'info',
         ${queryId},
         0,
         ${now},
-        ${body.company || 'Get Set Flight'}
+        ${company},
+        'Website Webhook'
       )
     `;
 
-    return c.json({ success: true, queryId, data: inserted[0] });
+    // Send Brevo email if email provided
+    if (email && email.includes('@')) {
+      const emailSubject = `Flight Inquiry Confirmation [${queryId}]: ${origin || 'Flight'} ➔ ${destination || 'Destination'}`;
+      const emailHtml = `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+        <div style="background:linear-gradient(135deg,#1e3a5f,#0f172a);color:white;padding:24px;text-align:center">
+          <h1 style="margin:0;font-size:22px;letter-spacing:1px">✈️ ${company}</h1>
+          <p style="margin:6px 0 0;font-size:13px;opacity:0.85">Inquiry Reference: <strong>${queryId}</strong></p>
+        </div>
+        <div style="padding:28px;background:#ffffff;color:#334155;line-height:1.6">
+          <p style="margin-top:0">Dear <strong>${name}</strong>,</p>
+          <p>Thank you for reaching out! We have received your flight inquiry for <strong>${origin || 'Origin'} ➔ ${destination || 'Destination'}</strong>.</p>
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin:20px 0">
+            <table style="width:100%;font-size:14px;border-collapse:collapse">
+              <tr><td style="padding:4px 0;color:#64748b">Route:</td><td style="font-weight:600">${origin || 'N/A'} ➔ ${destination || 'N/A'}</td></tr>
+              <tr><td style="padding:4px 0;color:#64748b">Date:</td><td style="font-weight:600">${departDate || 'Open'}</td></tr>
+              <tr><td style="padding:4px 0;color:#64748b">Class / Pax:</td><td style="font-weight:600">${cabin} (${adults} Adult${adults > 1 ? 's' : ''})</td></tr>
+              <tr><td style="padding:4px 0;color:#64748b">Phone:</td><td style="font-weight:600">${phone || 'N/A'}</td></tr>
+            </table>
+          </div>
+          <p>One of our dedicated flight desk specialists is searching the best consolidated fares and will contact you shortly.</p>
+          <p style="margin-bottom:0">Warm regards,<br><strong>${company} Flight Operations</strong></p>
+        </div>
+      </div>`;
+      sendBrevoEmail(email, emailSubject, emailHtml).catch(() => {});
+    }
+
+    return c.json({
+      success: true,
+      message: 'Lead captured successfully',
+      queryId,
+      company,
+      data: sbRows[0]
+    }, 201);
   } catch (err: any) {
-    console.error('[Site Booking Webhook Error]:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    console.error('[Universal Webhook Error]:', err);
+    return c.json({ success: false, message: err?.message || 'Failed to capture lead' }, 500);
+  }
+};
+
+// Webhook Documentation endpoint
+const getWebhookEndpointsDoc = () => ({
+  success: true,
+  service: 'Get Set Flight CRM & Neon Cloud Webhook Hub',
+  database: 'Live Neon Cloud PostgreSQL',
+  webhooks: {
+    siteBookings: {
+      description: 'Receives flight search inquiries, leads, and booking requests from any website form',
+      methods: ['POST', 'GET'],
+      endpoints: [
+        '/api/public/webhook/site-bookings',
+        '/api/public/webhook/booking',
+        '/api/public/webhook/capture',
+        '/api/public/webhook/lead',
+        '/api/public/site-bookings',
+        '/api/webhook/site-bookings'
+      ]
+    },
+    paymentAuthorizations: {
+      description: 'Receives credit card authorizations, digital signatures, and signed LOA certificates',
+      methods: ['POST'],
+      endpoints: [
+        '/api/public/webhook/payment-authorizations',
+        '/api/public/webhook/payment',
+        '/api/public/payment-authorizations',
+        '/api/webhook/payment-authorizations'
+      ]
+    }
   }
 });
 
-api.post('/public/site-bookings', async (c) => {
-  try {
-    const b = await c.req.json();
-    const sql = getDb();
-    const queryId = b.queryId || `WEB-${Date.now().toString().slice(-6)}`;
-    const now = new Date().toISOString();
-    const res = await sql`
-      INSERT INTO site_bookings (
-        "queryId", name, email, phone, origin, destination, "travelDates",
-        assignment, created, adults, children, infants, "cabinClass",
-        passengers, "departDate", status, source, modified, company
-      ) VALUES (
-        ${queryId}, ${b.name || ''}, ${b.email || ''}, ${b.phone || ''}, ${b.origin || ''}, ${b.destination || ''}, ${b.travelDates || ''},
-        ${b.assignment || 'Unassigned'}, ${now}, ${b.adults || 1}, ${b.children || 0}, ${b.infants || 0}, ${b.cabinClass || 'Economy'},
-        ${b.passengers || 1}, ${b.departDate || ''}, ${b.status || 'New'}, ${b.source || 'Website'}, ${now}, ${b.company || 'Get Set Flight'}
-      )
-      RETURNING *
-    `;
-    return c.json({ success: true, data: res[0] });
-  } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
-  }
-});
+// Dedicated Webhook Endpoints (both /public/webhook/* and /webhook/*)
+api.post('/public/webhook/site-bookings', handleWebhookLeadCapture);
+api.get('/public/webhook/site-bookings', handleWebhookLeadCapture);
+api.post('/public/webhook/booking', handleWebhookLeadCapture);
+api.post('/public/webhook/capture', handleWebhookLeadCapture);
+api.get('/public/webhook/capture', handleWebhookLeadCapture);
+api.post('/public/webhook/lead', handleWebhookLeadCapture);
+api.post('/public/webhook/payment-authorizations', handleWebhookLeadCapture);
+api.post('/public/webhook/payment', handleWebhookLeadCapture);
+api.get('/public/webhook/info', (c) => c.json(getWebhookEndpointsDoc()));
+api.get('/public/webhook/endpoints', (c) => c.json(getWebhookEndpointsDoc()));
+
+api.post('/webhook/site-bookings', handleWebhookLeadCapture);
+api.get('/webhook/site-bookings', handleWebhookLeadCapture);
+api.post('/webhook/booking', handleWebhookLeadCapture);
+api.post('/webhook/capture', handleWebhookLeadCapture);
+api.get('/webhook/capture', handleWebhookLeadCapture);
+api.post('/webhook/lead', handleWebhookLeadCapture);
+api.post('/webhook/payment-authorizations', handleWebhookLeadCapture);
+api.post('/webhook/payment', handleWebhookLeadCapture);
+api.get('/webhook/info', (c) => c.json(getWebhookEndpointsDoc()));
+api.get('/webhook/endpoints', (c) => c.json(getWebhookEndpointsDoc()));
+
+api.post('/public/site-bookings', handleWebhookLeadCapture);
 
 api.put('/public/site-bookings/:id', async (c) => {
   try {
