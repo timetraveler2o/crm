@@ -549,9 +549,13 @@ export default function AddBooking() {
 
   // If edit mode, load booking data
   const [hasLoadedData, setHasLoadedData] = useState(false);
+
+  useEffect(() => {
+    setHasLoadedData(false);
+  }, [id]);
   useEffect(() => {
     if (editId && bookings.length > 0 && !hasLoadedData) {
-      const b = bookings.find(bk => bk.id === editId);
+      const b = bookings.find(bk => bk.id === editId || String(bk.id) === String(id) || bk.queryId === id);
       if (b) {
         setOriginalQueryStatus(b.queryStatus || '');
         setForm({
