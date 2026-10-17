@@ -314,3 +314,62 @@
   animation: pulse-subtle 3s ease-in-out infinite;
 }
 
+@keyframes hero-float {
+  0%, 100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.008);
+  }
+}
+
+@keyframes badge-float-1 {
+  0%, 100% {
+    transform: translateY(0px) rotate(-1.5deg);
+  }
+  50% {
+    transform: translateY(-6px) rotate(0deg);
+  }
+}
+
+@keyframes badge-float-2 {
+  0%, 100% {
+    transform: translateY(0px) rotate(2deg);
+  }
+  50% {
+    transform: translateY(-9px) rotate(0.5deg);
+  }
+}
+
+@keyframes aura-pulse {
+  0%, 100% {
+    transform: scale(0.96);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.85;
+  }
+}
+
+.animate-hero-float {
+  animation: hero-float 4.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform;
+}
+
+.animate-badge-1 {
+  animation: badge-float-1 3.6s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-badge-2 {
+  animation: badge-float-2 4.6s ease-in-out infinite 0.5s;
+  will-change: transform;
+}
+
+.animate-aura-pulse {
+  animation: aura-pulse 5s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+

@@ -151,7 +151,10 @@ export const users = sqliteTable("users", {
   panCard: text("panCard"),
   resume: text("resume"),
   company: text("company").default("Get Set Flight"),
-  amadeusCreds: text("amadeusCreds").default("[]")
+  amadeusCreds: text("amadeusCreds").default("[]"),
+  emergencyNumber: text("emergencyNumber"),
+  currentAddress: text("currentAddress"),
+  permanentAddress: text("permanentAddress")
 }, (table) => {
   return {
     emailIdx: index("idx_users_email").on(table.email)

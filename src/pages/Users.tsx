@@ -46,7 +46,24 @@ export default function UsersPage() {
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [editId, setEditId] = useState<number | null>(null);
-  const [form, setForm] = useState({ addedBy: 'Admin', name: '', role: 'Agent', email: '', phone: '', gender: 'Male' as any, status: 'Active' as any, password: '', company: 'Get Set Flight', aadharCard: '', panCard: '', resume: '', image: '', amadeusCreds: [] as AmadeusCredential[] });
+  const [form, setForm] = useState({
+    addedBy: 'Admin',
+    name: '',
+    role: 'Agent',
+    email: '',
+    phone: '',
+    emergencyNumber: '',
+    currentAddress: '',
+    permanentAddress: '',
+    gender: 'Male' as any,
+    status: 'Active' as any,
+    password: '',
+    company: 'Get Set Flight',
+    aadharCard: '',
+    panCard: '',
+    image: '',
+    amadeusCreds: [] as AmadeusCredential[]
+  });
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const savedFilters = useRef(loadPageFilters<any>('users')).current;
@@ -89,13 +106,47 @@ export default function UsersPage() {
 
   const openAdd = () => {
     setEditId(null);
-    setForm({ addedBy: currentUser?.name || 'Admin', name: '', role: 'Agent', email: '', phone: '', gender: 'Male', status: 'Active', password: '', company: 'Get Set Flight', aadharCard: '', panCard: '', resume: '', image: '', amadeusCreds: [] });
+    setForm({
+      addedBy: currentUser?.name || 'Admin',
+      name: '',
+      role: 'Agent',
+      email: '',
+      phone: '',
+      emergencyNumber: '',
+      currentAddress: '',
+      permanentAddress: '',
+      gender: 'Male',
+      status: 'Active',
+      password: '',
+      company: 'Get Set Flight',
+      aadharCard: '',
+      panCard: '',
+      image: '',
+      amadeusCreds: []
+    });
     setShowModal(true);
   };
 
   const openEdit = (u: typeof users[0]) => {
     setEditId(u.id);
-    setForm({ addedBy: u.addedBy, name: u.name, role: u.role, email: u.email, phone: u.phone, gender: u.gender, status: u.status, password: '', company: (u as any).company || 'Get Set Flight', aadharCard: u.aadharCard || '', panCard: u.panCard || '', resume: u.resume || '', image: u.image || '', amadeusCreds: u.amadeusCreds || [] });
+    setForm({
+      addedBy: u.addedBy,
+      name: u.name,
+      role: u.role,
+      email: u.email,
+      phone: u.phone,
+      emergencyNumber: u.emergencyNumber || '',
+      currentAddress: u.currentAddress || '',
+      permanentAddress: u.permanentAddress || '',
+      gender: u.gender,
+      status: u.status,
+      password: '',
+      company: (u as any).company || 'Get Set Flight',
+      aadharCard: u.aadharCard || '',
+      panCard: u.panCard || '',
+      image: u.image || '',
+      amadeusCreds: u.amadeusCreds || []
+    });
     setShowModal(true);
   };
 
@@ -156,12 +207,15 @@ export default function UsersPage() {
   };
 
   const exportCSV = () => {
-    const headers = ['ID','Added By','Name','Role','Email','Phone','Gender','Status','Created','Modified','Aadhar Card','PAN Card','Resume'];
+    const headers = ['ID','Added By','Name','Role','Email','Phone','Emergency Phone','Current Address','Permanent Address','Gender','Status','Created','Modified','Aadhar Card','PAN Card'];
     const rows = filtered.map(u => [
-      u.id, u.addedBy, u.name, u.role, u.email, u.phone, u.gender, u.status, u.created, u.modified,
+      u.id, u.addedBy, u.name, u.role, u.email, u.phone,
+      u.emergencyNumber || '',
+      u.currentAddress || '',
+      u.permanentAddress || '',
+      u.gender, u.status, u.created, u.modified,
       u.aadharCard ? 'Yes' : 'No',
-      u.panCard ? 'Yes' : 'No',
-      u.resume ? 'Yes' : 'No'
+      u.panCard ? 'Yes' : 'No'
     ]);
     const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -174,12 +228,13 @@ export default function UsersPage() {
 
   const exportPDF = () => {
     const doc = new jsPDF('landscape');
-    const headers = ['ID','Added By','Name','Role','Email','Phone','Gender','Status','Aadhar','PAN','Resume'];
+    const headers = ['ID','Added By','Name','Role','Email','Phone','Emergency No','Status','Aadhar','PAN'];
     const rows = filtered.map(u => [
-      u.id, u.addedBy, u.name, u.role, u.email, u.phone, u.gender, u.status,
+      u.id, u.addedBy, u.name, u.role, u.email, u.phone,
+      u.emergencyNumber || '—',
+      u.status,
       u.aadharCard ? 'Yes' : 'No',
-      u.panCard ? 'Yes' : 'No',
-      u.resume ? 'Yes' : 'No'
+      u.panCard ? 'Yes' : 'No'
     ]);
     autoTable(doc, {
       head: [headers],
@@ -214,7 +269,7 @@ export default function UsersPage() {
 
     useEffect(() => {
       if (value) {
-        if (value.startsWith('http')) {
+        if (value.startsWith('http') || value.startsWith('data:')) {
           setResolvedUrl(value);
         } else {
           setResolving(true);
@@ -356,16 +411,15 @@ export default function UsersPage() {
                 <th className="table-header">Email</th>
                 <th className="table-header">Phone</th>
                 <th className="table-header">Status</th>
-                <th className="table-header">Amadeus</th>
                 <th className="table-header">Created</th>
                 <th className="table-header">Modified</th>
                 <th className="table-header">Action</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.slice((currentPage - 1) * perPage, currentPage * perPage).map((u) => (
+              {filtered.slice((currentPage - 1) * perPage, currentPage * perPage).map((u, idx) => (
                 <tr key={u.id} className={`hover:bg-gray-50/50 ${u.status === 'Inactive' ? 'opacity-60 bg-red-50/30' : ''}`}>
-                  <td className="table-cell font-medium">{u.id}</td>
+                  <td className="table-cell font-medium">{(currentPage - 1) * perPage + idx + 1}</td>
                   <td className="table-cell text-xs text-gray-500">{u.addedBy}</td>
                   <td className="table-cell">
                     <div className="flex items-center gap-2">
@@ -378,19 +432,6 @@ export default function UsersPage() {
                   <td className="table-cell text-xs">{u.phone}</td>
                   <td className="table-cell">
                     <span className={`badge ${u.status === 'Active' ? 'badge-active' : 'badge-inactive'}`}>{u.status}</span>
-                  </td>
-                  <td className="table-cell">
-                    {(u.amadeusCreds && u.amadeusCreds.length > 0) ? (
-                      <button
-                        onClick={() => { setViewAmadeusUser(u); setShowAmadeusViewModal(true); }}
-                        className="badge bg-indigo-50 text-indigo-700 cursor-pointer hover:bg-indigo-100 flex items-center gap-1"
-                        title="View Amadeus Credentials"
-                      >
-                        <Globe size={11} /> {u.amadeusCreds.length} ID{u.amadeusCreds.length > 1 ? 's' : ''}
-                      </button>
-                    ) : (
-                      <span className="text-xs text-gray-300">—</span>
-                    )}
                   </td>
                   <td className="table-cell text-xs text-gray-500">{formatDateDMY(u.created)}</td>
                   <td className="table-cell text-xs text-gray-500">{formatDateDMY(u.modified)}</td>
@@ -518,8 +559,22 @@ export default function UsersPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                  <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className="input-field" />
+                  <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className="input-field" placeholder="Primary phone number" />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Emergency Number</label>
+                  <input value={form.emergencyNumber} onChange={(e) => setForm(f => ({ ...f, emergencyNumber: e.target.value }))} className="input-field" placeholder="Emergency contact number" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Current Address</label>
+                <textarea rows={2} value={form.currentAddress} onChange={(e) => setForm(f => ({ ...f, currentAddress: e.target.value }))} className="input-field" placeholder="Present / current residential address" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Permanent Address</label>
+                <textarea rows={2} value={form.permanentAddress} onChange={(e) => setForm(f => ({ ...f, permanentAddress: e.target.value }))} className="input-field" placeholder="Permanent home address" />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
                   <select value={form.gender} onChange={(e) => setForm(f => ({ ...f, gender: e.target.value as any }))} className="select-field">
@@ -528,8 +583,6 @@ export default function UsersPage() {
                     <option>Other</option>
                   </select>
                 </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                   <select value={form.status} onChange={(e) => setForm(f => ({ ...f, status: e.target.value as any }))} className="select-field">
@@ -537,10 +590,10 @@ export default function UsersPage() {
                     <option>Inactive</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Password {!editId && '*'}</label>
-                  <input type="password" value={form.password} onChange={(e) => setForm(f => ({ ...f, password: e.target.value }))} className="input-field" placeholder={editId ? "Leave blank to keep current" : "Set password"} />
-                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password {!editId && '*'}</label>
+                <input type="password" value={form.password} onChange={(e) => setForm(f => ({ ...f, password: e.target.value }))} className="input-field" placeholder={editId ? "Leave blank to keep current" : "Set password"} />
               </div>
 
               <div className="pt-4 border-t border-gray-100">
@@ -548,82 +601,6 @@ export default function UsersPage() {
                 <div className="space-y-3">
                   <DocumentField label="Aadhar Card" type="aadharCard" value={form.aadharCard} icon={FileText} />
                   <DocumentField label="PAN Card" type="panCard" value={form.panCard} icon={FileText} />
-                  <DocumentField label="Resume" type="resume" value={form.resume} icon={FileText} />
-                </div>
-              </div>
-
-              {/* Amadeus Login Credentials Section */}
-              <div className="pt-4 border-t border-gray-100">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                    <Globe size={16} className="text-indigo-600" /> Amadeus Login Credentials
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newCred: AmadeusCredential = { id: Date.now().toString(), amadousId: '', username: '', officeId: '' };
-                      setForm(f => ({ ...f, amadeusCreds: [...f.amadeusCreds, newCred] }));
-                    }}
-                    className="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-100 flex items-center gap-1 font-medium"
-                  >
-                    <Plus size={12} /> Add Credential
-                  </button>
-                </div>
-                {form.amadeusCreds.length === 0 && (
-                  <p className="text-xs text-gray-400 italic">No Amadeus credentials added yet. Click "Add Credential" to add one.</p>
-                )}
-                <div className="space-y-3">
-                  {form.amadeusCreds.map((cred, idx) => (
-                    <div key={cred.id} className="border border-indigo-100 rounded-lg p-3 bg-indigo-50/30 relative">
-                      <button
-                        type="button"
-                        onClick={() => setForm(f => ({ ...f, amadeusCreds: f.amadeusCreds.filter(c => c.id !== cred.id) }))}
-                        className="absolute top-2 right-2 text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"
-                        title="Remove"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                      <p className="text-xs font-medium text-indigo-700 mb-2">Credential #{idx + 1}</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <div>
-                          <label className="block text-xs text-gray-600 mb-0.5">Amadeus ID</label>
-                          <input
-                            value={cred.amadousId}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setForm(f => ({ ...f, amadeusCreds: f.amadeusCreds.map(c => c.id === cred.id ? { ...c, amadousId: val } : c) }));
-                            }}
-                            className="input-field text-sm"
-                            placeholder="e.g. HDQRM2100"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-600 mb-0.5">Username</label>
-                          <input
-                            value={cred.username}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setForm(f => ({ ...f, amadeusCreds: f.amadeusCreds.map(c => c.id === cred.id ? { ...c, username: val } : c) }));
-                            }}
-                            className="input-field text-sm"
-                            placeholder="e.g. AGENT01"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-600 mb-0.5">Office ID</label>
-                          <input
-                            value={cred.officeId}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setForm(f => ({ ...f, amadeusCreds: f.amadeusCreds.map(c => c.id === cred.id ? { ...c, officeId: val } : c) }));
-                            }}
-                            className="input-field text-sm"
-                            placeholder="e.g. DELB228AA"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </div>
             </div>
@@ -683,53 +660,6 @@ export default function UsersPage() {
               <button onClick={handlePasswordUpdate} className="btn-primary" disabled={!newUserPassword || newUserPassword.length < 6}>
                 Update Password
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Amadeus Credentials View Modal */}
-      {showAmadeusViewModal && viewAmadeusUser && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto shadow-2xl">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="text-lg font-bold flex items-center gap-2">
-                <Globe size={18} className="text-indigo-600" /> Amadeus Credentials
-              </h2>
-              <button onClick={() => setShowAmadeusViewModal(false)} className="p-1 rounded-lg hover:bg-gray-100"><X size={20} /></button>
-            </div>
-            <div className="p-5 space-y-4">
-              <div className="bg-indigo-50 rounded-lg p-3">
-                <p className="text-sm text-indigo-700">Amadeus credentials for: <strong>{viewAmadeusUser.name}</strong> ({viewAmadeusUser.role})</p>
-              </div>
-              {(viewAmadeusUser.amadeusCreds || []).length === 0 ? (
-                <p className="text-sm text-gray-400 italic">No credentials found.</p>
-              ) : (
-                <div className="space-y-3">
-                  {(viewAmadeusUser.amadeusCreds || []).map((cred, idx) => (
-                    <div key={cred.id} className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/30">
-                      <p className="text-xs font-semibold text-indigo-700 mb-2">Credential #{idx + 1}</p>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div>
-                          <p className="text-xs text-gray-500 mb-0.5">Amadeus ID</p>
-                          <p className="text-sm font-semibold text-gray-900 font-mono">{cred.amadousId || '—'}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-0.5">Username</p>
-                          <p className="text-sm font-semibold text-gray-900 font-mono">{cred.username || '—'}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-0.5">Office ID</p>
-                          <p className="text-sm font-semibold text-gray-900 font-mono">{cred.officeId || '—'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="p-5 border-t border-gray-100 flex justify-end">
-              <button onClick={() => setShowAmadeusViewModal(false)} className="btn-secondary">Close</button>
             </div>
           </div>
         </div>

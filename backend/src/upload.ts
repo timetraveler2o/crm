@@ -35,21 +35,48 @@ const multerMiddleware = (uploadHandler: any) => async (c: any, next: any) => {
 };
 
 uploadApp.post('/public/upload', async (c) => {
-  const body = await c.req.parseBody();
-  const file = body['file'] as File;
-  if (!file) {
-    return c.json({ success: false, message: 'No file provided' }, 400);
+  try {
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const body = await c.req.parseBody();
+    const file = body['file'] as any;
+    if (!file) {
+      return c.json({ success: false, message: 'No file provided' }, 400);
+    }
+    
+    let buffer: Buffer;
+    let safeName = 'file';
+
+    if (typeof file === 'object' && typeof file.arrayBuffer === 'function') {
+      const arrayBuffer = await file.arrayBuffer();
+      buffer = Buffer.from(arrayBuffer);
+      safeName = (file.name || 'file').replace(/[^a-zA-Z0-9.-]/g, '_');
+    } else if (typeof file === 'string') {
+      const matches = file.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        buffer = Buffer.from(matches[2], 'base64');
+        const ext = matches[1].split('/')[1] || 'jpg';
+        safeName = 'upload.' + ext;
+      } else {
+        buffer = Buffer.from(file, 'utf8');
+        safeName = 'upload.txt';
+      }
+    } else {
+      buffer = Buffer.from(String(file));
+    }
+
+    const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1E9) + '-' + safeName;
+    const destPath = path.join(uploadDir, uniqueName);
+    
+    fs.writeFileSync(destPath, buffer);
+    
+    return c.json({ path: '/uploads/' + uniqueName, sizeBytes: buffer.length, success: true });
+  } catch (err: any) {
+    console.error('[Upload Error]:', err);
+    return c.json({ success: false, message: err?.message || 'Upload processing failed' }, 500);
   }
-  
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const safeName = (file.name || 'file').replace(/[^a-zA-Z0-9.-]/g, '_');
-  const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1E9) + '-' + safeName;
-  const filePath = path.join(uploadDir, uniqueName);
-  
-  fs.writeFileSync(filePath, buffer);
-  
-  return c.json({ path: '/uploads/' + uniqueName, sizeBytes: buffer.length, success: true });
 });
 
 export { uploadApp };

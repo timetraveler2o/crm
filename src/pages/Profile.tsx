@@ -3,7 +3,7 @@ import { useAuthStore } from '../store/authStore';
 import { useCrmStore } from '../store/crmStore';
 import { uploadImage, uploadFile, getImageUrl, client } from '../lib/api';
 import type { AmadeusCredential } from '../types';
-import { User as UserIcon, Mail, Phone, Shield, Save, Camera, Loader2, FileText, Lock, Upload, Eye, EyeOff, Globe, Plus, Trash2, Edit2 } from 'lucide-react';
+import { User as UserIcon, Mail, Phone, Shield, Save, Camera, Loader2, FileText, Lock, Upload, Eye, EyeOff, Globe, Plus, Trash2, Edit2, MapPin } from 'lucide-react';
 
 export default function Profile() {
   const { currentUser, updateProfile } = useAuthStore();
@@ -11,6 +11,9 @@ export default function Profile() {
   const [name, setName] = useState(currentUser?.name || '');
   const [email, setEmail] = useState(currentUser?.email || '');
   const [phone, setPhone] = useState(currentUser?.phone || '');
+  const [emergencyNumber, setEmergencyNumber] = useState(currentUser?.emergencyNumber || '');
+  const [currentAddress, setCurrentAddress] = useState(currentUser?.currentAddress || '');
+  const [permanentAddress, setPermanentAddress] = useState(currentUser?.permanentAddress || '');
   const [saved, setSaved] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string>('');
@@ -53,16 +56,36 @@ export default function Profile() {
 
   useEffect(() => {
     if (currentUser?.image) {
-      if (currentUser.image.startsWith('http')) {
+      if (currentUser.image.startsWith('http') || currentUser.image.startsWith('data:')) {
         setAvatarUrl(currentUser.image);
       } else {
-        getImageUrl(currentUser.image).then(setAvatarUrl);
+        getImageUrl(currentUser.image).then((url) => {
+          if (url) setAvatarUrl(url);
+        });
       }
     }
   }, [currentUser?.image]);
 
+  useEffect(() => {
+    if (currentUser) {
+      setName(currentUser.name || '');
+      setEmail(currentUser.email || '');
+      setPhone(currentUser.phone || '');
+      setEmergencyNumber(currentUser.emergencyNumber || '');
+      setCurrentAddress(currentUser.currentAddress || '');
+      setPermanentAddress(currentUser.permanentAddress || '');
+    }
+  }, [currentUser]);
+
   const handleSave = async () => {
-    await updateProfile({ name, email, phone });
+    await updateProfile({
+      name,
+      email,
+      phone,
+      emergencyNumber,
+      currentAddress,
+      permanentAddress
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -74,8 +97,10 @@ export default function Profile() {
     setUploading(true);
     try {
       const path = await uploadImage(file);
-      await updateProfile({ image: path });
-      // URL will be updated by useEffect
+      if (path) {
+        setAvatarUrl(path);
+        await updateProfile({ image: path });
+      }
     } catch (err) {
       console.error('Failed to upload image:', err);
     } finally {
@@ -90,11 +115,12 @@ export default function Profile() {
     setUploadingDoc(type);
     try {
       const path = await uploadFile(file);
-      await updateProfile({ [type]: path });
-      
-      if (type === 'aadharCard') setAadharFile(path);
-      if (type === 'panCard') setPanFile(path);
-      if (type === 'resume') setResumeFile(path);
+      if (path) {
+        if (type === 'aadharCard') setAadharFile(path);
+        if (type === 'panCard') setPanFile(path);
+        if (type === 'resume') setResumeFile(path);
+        await updateProfile({ [type]: path });
+      }
     } catch (err) {
       console.error(`Failed to upload ${type}:`, err);
     } finally {
@@ -232,11 +258,11 @@ export default function Profile() {
             {/* Avatar */}
             <div className="flex items-center gap-4 mb-6 pb-6 border-b border-gray-100">
               <div className="relative group">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold overflow-hidden">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold overflow-hidden shadow-sm">
                   {avatarUrl ? (
-                    <img src={avatarUrl} alt={currentUser.name} className="w-full h-full object-cover" />
+                    <img src={avatarUrl} alt={currentUser?.name || 'User'} className="w-full h-full object-cover" />
                   ) : (
-                    currentUser.name[0]
+                    (currentUser?.name || 'User')[0]?.toUpperCase()
                   )}
                 </div>
                 {canEditProfile && (
@@ -247,9 +273,9 @@ export default function Profile() {
                 )}
               </div>
               <div>
-                <h2 className="text-lg font-bold text-gray-900">{currentUser.name}</h2>
-                <p className="text-sm text-gray-500">{currentUser.role}</p>
-                <span className="badge badge-active mt-1">{currentUser.status}</span>
+                <h2 className="text-lg font-bold text-gray-900">{currentUser?.name || 'User'}</h2>
+                <p className="text-sm text-gray-500">{currentUser?.role || 'Staff'}</p>
+                <span className="badge badge-active mt-1">{currentUser?.status || 'Active'}</span>
               </div>
             </div>
 
@@ -271,8 +297,28 @@ export default function Profile() {
                   <input value={phone} onChange={(e) => setPhone(e.target.value)} className="input-field" disabled={!canEditProfile} />
                 </div>
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Phone size={14} className="text-red-500" /> Emergency Number</label>
+                  <input value={emergencyNumber} onChange={(e) => setEmergencyNumber(e.target.value)} className="input-field" placeholder="Emergency contact number" disabled={!canEditProfile} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><MapPin size={14} /> Current Address</label>
+                  <textarea rows={2} value={currentAddress} onChange={(e) => setCurrentAddress(e.target.value)} className="input-field" placeholder="Current residential address" disabled={!canEditProfile} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><MapPin size={14} /> Permanent Address</label>
+                  <textarea rows={2} value={permanentAddress} onChange={(e) => setPermanentAddress(e.target.value)} className="input-field" placeholder="Permanent home address" disabled={!canEditProfile} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Shield size={14} /> Role</label>
-                  <input value={currentUser.role} className="input-field bg-gray-50" disabled />
+                  <input value={currentUser?.role || ''} className="input-field bg-gray-50" disabled />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Globe size={14} /> Company</label>
+                  <input value={currentUser?.company || 'Get Set Flight'} className="input-field bg-gray-50" disabled />
                 </div>
               </div>
 
@@ -295,160 +341,7 @@ export default function Profile() {
             <div className="space-y-4">
               <DocumentField label="Aadhar Card" type="aadharCard" value={aadharFile} icon={FileText} />
               <DocumentField label="PAN Card" type="panCard" value={panFile} icon={FileText} />
-              <DocumentField label="Resume" type="resume" value={resumeFile} icon={FileText} />
             </div>
-          </div>
-
-          {/* Amadeus Login Credentials Section */}
-          <div className="card p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <Globe size={20} className="text-indigo-600" /> Amadeus Login Credentials
-              </h2>
-              {canManageAmadeus && !editingAmadeus && (
-                <button
-                  onClick={() => setEditingAmadeus(true)}
-                  className="btn-secondary text-xs flex items-center gap-1"
-                >
-                  <Edit2 size={13} /> Edit
-                </button>
-              )}
-            </div>
-
-            {amadeusSuccess && (
-              <div className="text-sm text-emerald-600 bg-emerald-50 p-2 rounded mb-3">{amadeusSuccess}</div>
-            )}
-
-            {amadeusError && (
-              <div className="text-sm text-red-600 bg-red-50 p-2 rounded mb-3">{amadeusError}</div>
-            )}
-
-            {amadeusCreds.length === 0 && !editingAmadeus && (
-              <p className="text-sm text-gray-400 italic">No Amadeus credentials assigned yet.</p>
-            )}
-
-            {!editingAmadeus ? (
-              /* View Mode */
-              <div className="space-y-3">
-                {amadeusCreds.map((cred, idx) => (
-                  <div key={cred.id} className="border border-indigo-100 rounded-lg p-3 bg-indigo-50/30">
-                    <p className="text-xs font-semibold text-indigo-700 mb-2">Credential #{idx + 1}</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <p className="text-xs text-gray-500">Amadeus ID</p>
-                        <p className="text-sm font-medium text-gray-900">{cred.amadousId || '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Username</p>
-                        <p className="text-sm font-medium text-gray-900">{cred.username || '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Office ID</p>
-                        <p className="text-sm font-medium text-gray-900">{cred.officeId || '—'}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              /* Edit Mode */
-              <div className="space-y-3">
-                {amadeusCreds.map((cred, idx) => (
-                  <div key={cred.id} className="border border-indigo-200 rounded-lg p-3 bg-indigo-50/50 relative">
-                    <button
-                      type="button"
-                      onClick={() => setAmadeusCreds(prev => prev.filter(c => c.id !== cred.id))}
-                      className="absolute top-2 right-2 text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"
-                      title="Remove"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                    <p className="text-xs font-medium text-indigo-700 mb-2">Credential #{idx + 1}</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-0.5">Amadeus ID</label>
-                        <input
-                          value={cred.amadousId}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setAmadeusCreds(prev => prev.map(c => c.id === cred.id ? { ...c, amadousId: val } : c));
-                          }}
-                          className="input-field text-sm"
-                          placeholder="e.g. HDQRM2100"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-0.5">Username</label>
-                        <input
-                          value={cred.username}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setAmadeusCreds(prev => prev.map(c => c.id === cred.id ? { ...c, username: val } : c));
-                          }}
-                          className="input-field text-sm"
-                          placeholder="e.g. AGENT01"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-0.5">Office ID</label>
-                        <input
-                          value={cred.officeId}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setAmadeusCreds(prev => prev.map(c => c.id === cred.id ? { ...c, officeId: val } : c));
-                          }}
-                          className="input-field text-sm"
-                          placeholder="e.g. DELB228AA"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const newCred: AmadeusCredential = { id: Date.now().toString(), amadousId: '', username: '', officeId: '' };
-                    setAmadeusCreds(prev => [...prev, newCred]);
-                  }}
-                  className="text-xs bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg hover:bg-indigo-100 flex items-center gap-1 font-medium"
-                >
-                  <Plus size={12} /> Add Credential
-                </button>
-                <div className="flex items-center gap-2 pt-2">
-                  <button
-                    onClick={async () => {
-                      if (!currentUser) return;
-                      setSavingAmadeus(true);
-                      setAmadeusError('');
-                      setAmadeusSuccess('');
-                      try {
-                        await updateUser(currentUser.id, { amadeusCreds: amadeusCreds });
-                        setAmadeusSuccess('Amadeus credentials saved successfully!');
-                        setEditingAmadeus(false);
-                        setTimeout(() => setAmadeusSuccess(''), 3000);
-                      } catch (err: any) {
-                        console.error('Failed to save Amadeus creds:', err);
-                        setAmadeusError('Failed to save: ' + (err?.message || 'Please try again.'));
-                        setTimeout(() => setAmadeusError(''), 5000);
-                      } finally {
-                        setSavingAmadeus(false);
-                      }
-                    }}
-                    className="btn-primary text-sm flex items-center gap-1"
-                    disabled={savingAmadeus}
-                  >
-                    {savingAmadeus ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                    Save Credentials
-                  </button>
-                  <button
-                    onClick={() => { setAmadeusCreds(userFromStore?.amadeusCreds || []); setEditingAmadeus(false); }}
-                    className="btn-secondary text-sm"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
 

@@ -289,7 +289,7 @@ export default function Productivity() {
       let amount = 0;
       let gpm = 0;
       try {
-        const pnrs = JSON.parse(b.pnrDetails || '[]');
+        const pnrs = safeParsePnrDetails(b);
         amount = pnrs.reduce((sum: number, p: any) => sum + (Number(p.sell) || 0), 0);
         gpm = pnrs.reduce((sum: number, p: any) => sum + (Number(p.gpm) || 0), 0);
       } catch { amount = 0; gpm = 0; }
@@ -334,7 +334,7 @@ export default function Productivity() {
         if (b.queryStatus === 'Schedule Change') counts[b.addedBy].scheduleChange += 1;
         if (b.queryStatus === 'Cancellation') counts[b.addedBy].cancellation += 1;
         try {
-          const pnrs = JSON.parse(b.pnrDetails || '[]');
+          const pnrs = safeParsePnrDetails(b);
           const gpmVal = pnrs.reduce((sum: number, p: any) => sum + (Number(p.gpm) || 0), 0);
           const amtVal = pnrs.reduce((sum: number, p: any) => sum + (Number(p.sell) || 0), 0);
           const curr = (b.currency || 'CAD').toUpperCase();
@@ -375,7 +375,7 @@ export default function Productivity() {
       if (b.queryStatus === 'Cancellation') acc[route].cancellation++;
       if (b.queryStatus === 'Variance') acc[route].variance++;
       try {
-        const pnrs = JSON.parse(b.pnrDetails || '[]');
+        const pnrs = safeParsePnrDetails(b);
         const gpmVal = pnrs.reduce((sum: number, p: any) => sum + (Number(p.gpm) || 0), 0);
         const amtVal = pnrs.reduce((sum: number, p: any) => sum + (Number(p.sell) || 0), 0);
         acc[route].gpm += gpmVal;

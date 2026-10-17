@@ -109,6 +109,40 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
     onDataChange(formData);
   }, [formData, onDataChange]);
 
+  // Pre-fill fields from URL query parameters (e.g. from CRM generated customer link)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      const name = sp.get('name') || sp.get('clientName') || '';
+      const email = sp.get('email') || '';
+      const phone = sp.get('phone') || '';
+      const amount = sp.get('amount') || '';
+      const currency = sp.get('currency') || '';
+      const reservation = sp.get('reservationNumber') || sp.get('pnr') || sp.get('queryId') || '';
+      const address = sp.get('address') || '';
+
+      if (name || email || phone || amount || reservation) {
+        setFormData(prev => {
+          const parts = name.trim().split(' ');
+          const firstName = parts[0] || prev.firstName;
+          const lastName = parts.slice(1).join(' ') || prev.lastName;
+          return {
+            ...prev,
+            name: name || prev.name,
+            firstName: firstName || prev.firstName,
+            lastName: lastName || prev.lastName,
+            email: email || prev.email,
+            phoneNumber: phone || prev.phoneNumber,
+            amount: amount || prev.amount,
+            currency: (currency && ['CAD', 'USD', 'INR', 'AUD'].includes(currency.toUpperCase())) ? currency.toUpperCase() : prev.currency,
+            reservationNumber: reservation || prev.reservationNumber,
+            address: address || prev.address,
+          };
+        });
+      }
+    }
+  }, []);
+
   const brandName = getCardBrandName(getCardType(formData.number));
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {

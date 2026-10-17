@@ -86,63 +86,63 @@ const rawCompanyData: Record<string, { name: string; logo: string; short: string
     fullName: 'Get Set Flight PRIVATE LIMITED',
     logo: '/gsf-logo.png',
     short: 'GSF',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   GSF: {
     name: 'Get Set Flight',
     fullName: 'Get Set Flight PRIVATE LIMITED',
     logo: '/gsf-logo.png',
     short: 'GSF',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   'Get Set Flight': {
     name: 'Get Set Flight',
     fullName: 'Get Set Flight PRIVATE LIMITED',
     logo: '/gsf-logo.png',
     short: 'GSF',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   emt: {
     name: 'Look Book Ticket',
     fullName: 'Look Book Ticket PRIVATE LIMITED',
     logo: '/lbt-logo.png',
     short: 'LBT',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   LBT: {
     name: 'Look Book Ticket',
     fullName: 'Look Book Ticket PRIVATE LIMITED',
     logo: '/lbt-logo.png',
     short: 'LBT',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   'Look Book Ticket': {
     name: 'Look Book Ticket',
     fullName: 'Look Book Ticket PRIVATE LIMITED',
     logo: '/lbt-logo.png',
     short: 'LBT',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   travelo: {
     name: 'Traveloboom',
     fullName: 'Traveloboom PRIVATE LIMITED',
     logo: '/tbm-logo.png',
     short: 'Travelo',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   Traveloboom: {
     name: 'Traveloboom',
     fullName: 'Traveloboom PRIVATE LIMITED',
     logo: '/tbm-logo.png',
     short: 'Travelo',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   },
   TBM: {
     name: 'Traveloboom',
     fullName: 'Traveloboom PRIVATE LIMITED',
     logo: '/tbm-logo.png',
     short: 'Travelo',
-    address: 'WorldTech Square 3rd Floor, Plot No. I-15 & I-16, IT City Rd, Sector 83, JLPL Industrial Area, Punjab 160055'
+    address: 'Plot No. 130, Sector 82, JLPL Industrial Area, Sahibzada Ajit Singh Nagar, Punjab 140306'
   }
 };
 
@@ -421,7 +421,7 @@ export default function Payslip() {
     setDepartment(user.role?.includes('Sales') ? 'Sales' : user.role?.includes('IT') ? 'Information Technology' : user.role?.includes('HR') ? 'Human Resources' : 'Operations');
     setSearchEmployee(user.name);
     setShowEmployeeDropdown(false);
-    setJoiningDate(user.created ? new Date(user.created).toISOString().split('T')[0] : '');
+    try { const jd = user.created ? new Date(user.created) : null; setJoiningDate(jd && !isNaN(jd.getTime()) ? jd.toISOString().split('T')[0] : ''); } catch { setJoiningDate(''); }
   };
 
   // Apply template
@@ -1509,7 +1509,7 @@ ${comp.address}`;
                       department: user.role?.includes('Sales') ? 'Sales' : 'Operations',
                       bankName: '',
                       bankAccountNo: '',
-                      joiningDate: user.created ? new Date(user.created).toISOString().split('T')[0] : '',
+                      joiningDate: (() => { try { const jd = user.created ? new Date(user.created) : null; return jd && !isNaN(jd.getTime()) ? jd.toISOString().split('T')[0] : ''; } catch { return ''; } })(),
                       payPeriod: `${payPeriodMonth} ${payPeriodYear}`,
                       payDate: new Date().toISOString().split('T')[0],
                       totalWorkingDays: workingDays,

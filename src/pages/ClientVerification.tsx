@@ -251,14 +251,26 @@ export default function ClientVerification() {
     }, 200);
   }, [facingMode, stopCamera, startCamera]);
 
-  // Capture photo from video
+  // Capture photo from video (optimized for crisp quality under 100KB)
   const capturePhoto = (): string | null => {
     if (!videoRef.current || !canvasRef.current) return null;
     const video = videoRef.current;
-    // Allow capture even if videoWidth reports 0 (some browsers lag on this)
-    const vw = video.videoWidth || video.clientWidth || 640;
-    const vh = video.videoHeight || video.clientHeight || 480;
+    let vw = video.videoWidth || video.clientWidth || 640;
+    let vh = video.videoHeight || video.clientHeight || 480;
     if (vw === 0 || vh === 0) return null;
+
+    // Scale down high-res phone cameras (e.g. 4K/1080p) to crisp 1280px to save DB storage & network bandwidth
+    const MAX_DIM = 1280;
+    if (vw > MAX_DIM || vh > MAX_DIM) {
+      if (vw > vh) {
+        vh = Math.round((vh * MAX_DIM) / vw);
+        vw = MAX_DIM;
+      } else {
+        vw = Math.round((vw * MAX_DIM) / vh);
+        vh = MAX_DIM;
+      }
+    }
+
     const canvas = canvasRef.current;
     canvas.width = vw;
     canvas.height = vh;
@@ -270,7 +282,7 @@ export default function ClientVerification() {
       ctx.scale(-1, 1);
     }
     ctx.drawImage(video, 0, 0, vw, vh);
-    return canvas.toDataURL('image/jpeg', 0.85);
+    return canvas.toDataURL('image/jpeg', 0.78);
   };
 
   // AI Check

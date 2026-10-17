@@ -86,3 +86,46 @@ export type CompanyBrandId = keyof typeof COMPANY_BRAND_COLORS;
 export function getCompanyBrand(companyId: string) {
   return COMPANY_BRAND_COLORS[companyId as CompanyBrandId] || COMPANY_BRAND_COLORS.fdi;
 }
+
+/**
+ * Safely parse PNR details array from any booking object.
+ * Supports:
+ * - Pre-parsed Array
+ * - JSON string in pnrDetails or pnr_details
+ * - Fallback to comma-separated PNRs in booking.pnr
+ */
+export function safeParsePnrDetails(booking: any): any[] {
+  if (!booking) return [];
+  const raw = booking.pnrDetails ?? booking.pnr_details;
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+  if (typeof raw === 'string' && raw.trim() && raw.trim() !== '[]') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch {}
+  }
+  // Fallback to legacy single or comma-separated PNR string
+  if (booking.pnr && typeof booking.pnr === 'string' && booking.pnr.trim()) {
+    const parts = booking.pnr.split(',').map((s: string) => s.trim()).filter(Boolean);
+    if (parts.length > 0) {
+      return parts.map((p: string) => ({
+        pnr: p,
+        firstName: booking.firstName || '',
+        lastName: booking.lastName || '',
+        airline: '',
+        supplier: '',
+        paymentMethod: '',
+        cost: 0,
+        sell: 0,
+        fee: 0,
+        mco: 0,
+        gpm: 0
+      }));
+    }
+  }
+  return [];
+}

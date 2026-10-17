@@ -24,11 +24,14 @@ export interface User {
   resume?: string;
   company?: string; // Get Set Flight | Look Book Ticket | Traveloboom
   amadeusCreds?: AmadeusCredential[]; // Amadeus login credentials
+  emergencyNumber?: string;
+  currentAddress?: string;
+  permanentAddress?: string;
 }
 
 // Company definitions
 export const COMPANIES = [
-  { id: 'GSF', name: 'Get Set Flight', emailDomain: 'getsetflight.com', altDomain: '', logo: 'https://getsetflight.com/get_set_flight_logo.png', short: 'GSF' },
+  { id: 'GSF', name: 'Get Set Flight', emailDomain: 'getsetflight.com', altDomain: '', logo: '/logo.png', short: 'GSF' },
   { id: 'LBT', name: 'Look Book Ticket', emailDomain: 'lookbookticket.com', altDomain: '', logo: 'https://lookbookticket.com/logo.png', short: 'LBT' },
   { id: 'travelo', name: 'Traveloboom', emailDomain: 'traveloboom.com', altDomain: '', logo: 'https://traveloboom.com/traveloboom_logo_v4.png', short: 'TBM' },
 ] as const;
@@ -97,6 +100,7 @@ export interface Booking {
   callbackRemark?: string; // What to discuss during callback
   pnr: string;
   pnrDetails?: string;
+  pnr_details?: string;
   tripType?: string;
   currency?: string;
   images?: string;
@@ -110,7 +114,7 @@ export interface Booking {
   modificationHistory?: string; // JSON array of modification records
 }
 
-export const SUPPLIERS = ['INTER', 'SKY BIRD', 'ONKAR', 'RIYA (IXC)', 'CVFR', 'MONDEE', 'MMT', 'INDIGO', 'TBO', 'Airline Website', 'Goibibo', 'Easemytrip', 'MMT Website', 'Fixed Departures'] as const;
+export const SUPPLIERS = ['INTER', 'SKY', 'ONKAR', 'RIYA (IXC)', 'CVFR', 'MONDEE', 'MMT', 'INDIGO', 'TBO', 'Airline Website', 'Goibibo', 'Easemytrip', 'MMT Website', 'Fixed Departures'] as const;
 export type SupplierName = typeof SUPPLIERS[number];
 
 export const PAYMENT_METHODS = ['Pax Card', 'Cheque', 'Third Party Card', 'Company Card'] as const;

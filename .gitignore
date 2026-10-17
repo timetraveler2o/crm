@@ -42,3 +42,9 @@ backend/uploads/*
 backend/sqlite.db
 backend/sqlite.db-journal
 *.db
+
+backend/backend.log
+*.log
+scratch/
+/logo.png
+/rn-favicon.png

@@ -26,8 +26,8 @@ const formatLogDateTime = () => {
 };
 
 export default function SiteBookings() {
-  const { siteBookings, assignSiteBooking, users, updateSiteBooking, deleteSiteBooking, fetchData } = useCrmStore();
-  const { currentUser, activeCompany, isMultiCompanyAdmin, getUserCompany } = useAuthStore();
+  const { siteBookings, assignSiteBooking, users, updateSiteBooking, deleteSiteBooking, addSiteBooking, fetchData } = useCrmStore();
+  const { currentUser, activeCompany, isMultiCompanyAdmin, getUserCompany, addNotification } = useAuthStore();
   const navigate = useNavigate();
 
   useEffect(() => { fetchData(); }, []);
@@ -165,7 +165,102 @@ export default function SiteBookings() {
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    alert("Import functionality would process: " + file.name);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          alert('CSV file is empty or has no data rows');
+          return;
+        }
+
+        const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
+        const fieldMap: Record<string, string> = {
+          'query id': 'queryId', 'queryid': 'queryId',
+          'name': 'name', 'client name': 'name', 'customer': 'name',
+          'email': 'email', 'e-mail': 'email',
+          'phone': 'phone', 'contact': 'phone', 'mobile': 'phone',
+          'origin': 'origin', 'from': 'origin', 'departure': 'origin',
+          'destination': 'destination', 'to': 'destination', 'arrival': 'destination',
+          'depart date': 'departDate', 'departure date': 'departDate', 'departuredate': 'departDate',
+          'return date': 'returnDate', 'returndate': 'returnDate',
+          'travel dates': 'travelDates',
+          'assignment': 'assignment', 'assigned to': 'assignment',
+          'status': 'status',
+          'cabin': 'cabin', 'cabin class': 'cabin', 'class': 'cabin',
+          'adults': 'adults', 'adult': 'adults',
+          'children': 'children', 'child': 'children',
+          'infants': 'infants', 'infant': 'infants',
+          'trip type': 'tripType', 'triptype': 'tripType',
+          'source': 'source',
+          'company': 'company',
+        };
+
+        const mappedHeaders = headers.map(h => fieldMap[h] || h);
+        let count = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+          const values: string[] = [];
+          let current = '';
+          let inQuotes = false;
+          for (const char of lines[i]) {
+            if (char === '"') { inQuotes = !inQuotes; continue; }
+            if (char === ',' && !inQuotes) { values.push(current.trim()); current = ''; continue; }
+            current += char;
+          }
+          values.push(current.trim());
+
+          const row: any = {};
+          mappedHeaders.forEach((field, idx) => {
+            if (values[idx] !== undefined) row[field] = values[idx];
+          });
+
+          const comp = row.company || (displayCompany === 'LBT' ? 'Look Book Ticket' : displayCompany === 'travelo' ? 'Traveloboom' : 'Get Set Flight');
+          const prefix = comp === 'Look Book Ticket' ? 'LBT' : comp === 'Traveloboom' ? 'TBM' : 'GSF';
+          const newQueryId = row.queryId || `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
+
+          const siteBookingData = {
+            queryId: newQueryId,
+            name: row.name || 'Website Lead',
+            email: row.email || '',
+            phone: row.phone || '',
+            origin: row.origin || '',
+            destination: row.destination || '',
+            departDate: row.departDate || '',
+            travelDates: row.travelDates || row.departDate || '',
+            returnDate: row.returnDate || '',
+            assignment: row.assignment || 'Unassigned',
+            status: row.status || 'New',
+            cabin: row.cabin || 'Economy',
+            adults: Number(row.adults) || 1,
+            children: Number(row.children) || 0,
+            infants: Number(row.infants) || 0,
+            tripType: row.tripType || 'One Way',
+            source: row.source || 'CSV Import',
+            company: comp,
+            created: formatLogDateTime(),
+            modified: formatLogDateTime(),
+          };
+
+          if (siteBookingData.name || siteBookingData.email || siteBookingData.phone) {
+            await addSiteBooking(siteBookingData);
+            count++;
+          }
+        }
+
+        addNotification({
+          title: 'Import Complete',
+          message: `Successfully imported ${count} site booking leads from ${file.name}`,
+          type: 'success',
+        });
+        fetchData();
+      } catch (err: any) {
+        console.error('Site bookings import error:', err);
+        alert('Failed to parse CSV file. Please check format.');
+      }
+    };
+    reader.readAsText(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -178,20 +273,28 @@ export default function SiteBookings() {
     try { return JSON.parse(remarks); } catch { return []; }
   };
 
-  // Extract IATA code from airport string like "Dallas/Ft. Worth (TX) - Dallas/Fort Worth International USA [DFW]"
+  // Extract IATA code or clean location name properly without truncation
   const extractIata = (val: string | undefined): string => {
     if (!val) return '—';
-    // Check for bracket pattern [XXX]
-    const bracketMatch = val.match(/\[([A-Z]{3})\]/);
-    if (bracketMatch) return bracketMatch[1];
-    // If already a short code (3 letters), return as-is
-    const trimmed = val.trim().toUpperCase();
-    if (/^[A-Z]{3}$/.test(trimmed)) return trimmed;
-    // Try to extract first 3-letter uppercase word
-    const codeMatch = trimmed.match(/\b([A-Z]{3})\b/);
-    if (codeMatch) return codeMatch[1];
-    // Fallback: return first word (truncated)
-    return trimmed.split(/[\s\-,]/)[0].slice(0, 6) || '—';
+    const trimmed = val.trim();
+    if (!trimmed) return '—';
+    // 1. Bracket pattern [XXX] or (XXX)
+    const bracketMatch = trimmed.match(/[\[\(]([A-Za-z]{3})[\]\)]/);
+    if (bracketMatch) return bracketMatch[1].toUpperCase();
+    // 2. Pure 3-letter IATA code
+    if (/^[A-Za-z]{3}$/.test(trimmed)) return trimmed.toUpperCase();
+    // 3. Prefix pattern like "DFW - Dallas/Fort Worth" or "YYZ: Toronto"
+    const prefixMatch = trimmed.match(/^([A-Za-z]{3})\s*[\-:\/|]/);
+    if (prefixMatch) return prefixMatch[1].toUpperCase();
+    // 4. Postfix pattern like "Toronto - YYZ" or "London / LHR"
+    const postfixMatch = trimmed.match(/[\-:\/|]\s*([A-Za-z]{3})$/);
+    if (postfixMatch) return postfixMatch[1].toUpperCase();
+    // 5. Look for standalone 3-letter uppercase code
+    const standaloneMatch = trimmed.match(/\b([A-Z]{3})\b/);
+    if (standaloneMatch) return standaloneMatch[1];
+    // 6. Return clean city/airport name without truncating
+    const clean = trimmed.split(' - ')[0].trim();
+    return clean || trimmed;
   };
 
   return (

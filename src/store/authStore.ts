@@ -14,6 +14,8 @@ interface AuthState {
   activeCompany: CompanyId; // Company context for admins switching between companies
   loginTimestamp: number | null; // Timestamp when user logged in (for 12-hour auto-logout)
   login: (email: string, password: string) => Promise<boolean>;
+  loginRequest: (email: string, password: string) => Promise<{ success: boolean; requiresOtp?: boolean; message?: string; fallbackOtp?: string; emailSent?: boolean }>;
+  loginVerifyOtp: (email: string, otp: string) => Promise<{ success: boolean; message?: string }>;
   loginWithUserData: (userData: any) => void;
   logout: () => Promise<void>;
   checkAutoLogout: () => boolean; // Returns true if session expired
@@ -22,6 +24,7 @@ interface AuthState {
   markNotificationRead: (id: number) => void;
   markAllRead: () => void;
   clearAllNotifications: () => void;
+  deleteNotification: (id: number | string) => void;
   unreadCount: () => number;
   getCompanyNotifications: () => Notification[];
   checkSession: () => Promise<void>;
@@ -63,6 +66,102 @@ export const useAuthStore = create<AuthState>()(
         if (!currentUser) return false;
         const role = (currentUser.role || '').toLowerCase();
         return ['admin', 'super admin', 'superuser', 'hr (human resource)', 'hr', 'it (information tech)', 'it'].includes(role);
+      },
+
+      loginRequest: async (email: string, password: string) => {
+        try {
+          set({ isChecking: true });
+          const trimmedEmail = email.trim().toLowerCase();
+          const trimmedPassword = password.trim();
+
+          const res = await client.api.fetch('/api/public/login-request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword })
+          });
+
+          let data: any = {};
+          try {
+            data = await res.json();
+          } catch {
+            set({ isChecking: false });
+            return { success: false, message: 'Server connection error. Please try again.' };
+          }
+
+          set({ isChecking: false });
+          if (!res.ok || !data.success) {
+            return { success: false, message: data.message || 'Invalid email or password' };
+          }
+
+          return { success: true, requiresOtp: true, message: data.message, fallbackOtp: data.fallbackOtp, emailSent: data.emailSent };
+        } catch (err: any) {
+          set({ isChecking: false });
+          return { success: false, message: err?.message || 'Connection error. Please try again.' };
+        }
+      },
+
+      loginVerifyOtp: async (email: string, otp: string) => {
+        try {
+          set({ isChecking: true });
+          const trimmedEmail = email.trim().toLowerCase();
+          const cleanOtp = otp.trim();
+
+          const res = await client.api.fetch('/api/public/login-verify-otp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: trimmedEmail, otp: cleanOtp })
+          });
+
+          let data: any = {};
+          try {
+            data = await res.json();
+          } catch {
+            set({ isChecking: false });
+            return { success: false, message: 'Server connection error. Please try again.' };
+          }
+
+          if (!res.ok || !data.success) {
+            set({ isChecking: false });
+            return { success: false, message: data.message || 'Invalid or expired verification code' };
+          }
+
+          // Block inactive users from logging in
+          if (data.user?.status === 'Inactive') {
+            set({ isChecking: false });
+            return { success: false, message: 'Account is inactive. Please contact administrator.' };
+          }
+
+          const userCompany = getCompanyFromEmail(data.user.email);
+          set({
+            isAuthenticated: true,
+            isChecking: false,
+            currentUser: data.user,
+            activeCompany: userCompany,
+            loginTimestamp: Date.now(),
+          });
+
+          // Record login activity
+          try {
+            const deviceInfo = navigator.userAgent.includes('Mobile') ? 'Mobile' : 'Desktop';
+            await client.api.fetch('/api/public/login-activity', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: data.user.id,
+                userName: data.user.name,
+                device: deviceInfo,
+                status: 'Success (2FA OTP)',
+              }),
+            });
+          } catch (e) {
+            console.error('Failed to log activity:', e);
+          }
+
+          return { success: true };
+        } catch (err: any) {
+          set({ isChecking: false });
+          return { success: false, message: err?.message || 'Verification error. Please try again.' };
+        }
       },
 
       login: async (email, password) => {
@@ -219,6 +318,10 @@ export const useAuthStore = create<AuthState>()(
         const { currentUser } = get();
         if (!currentUser) return;
         
+        // Optimistic update so UI never wipes user properties or crashes
+        const merged = { ...currentUser, ...data };
+        set({ currentUser: merged });
+
         try {
           const res = await client.api.fetch(`/api/public/users/${currentUser.id}`, {
             method: 'PUT',
@@ -226,8 +329,10 @@ export const useAuthStore = create<AuthState>()(
             body: JSON.stringify(data)
           });
           const updated = await res.json();
-          // Keep permissions when updating profile
-          set({ currentUser: { ...updated.data, permissions: currentUser.permissions } });
+          const serverUser = updated?.data || updated?.user;
+          if (serverUser && typeof serverUser === 'object' && serverUser.name) {
+            set({ currentUser: { ...merged, ...serverUser, permissions: currentUser.permissions } });
+          }
         } catch (err) {
           console.error('Failed to update profile:', err);
         }
@@ -282,7 +387,16 @@ export const useAuthStore = create<AuthState>()(
       },
 
       clearAllNotifications: () => {
+        const { activeCompany } = get();
         set({ notifications: [] });
+        client.api.fetch(`/api/public/notifications/clear-all?company=${encodeURIComponent(activeCompany || '')}`, { method: 'DELETE' }).catch(() => {});
+      },
+
+      deleteNotification: (id) => {
+        set((state) => ({
+          notifications: state.notifications.filter(n => String(n.id) !== String(id))
+        }));
+        client.api.fetch(`/api/public/notifications/${id}`, { method: 'DELETE' }).catch(() => {});
       },
 
       unreadCount: () => {

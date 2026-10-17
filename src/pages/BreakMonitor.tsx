@@ -632,8 +632,8 @@ export default function BreakMonitor() {
       const matchedUser = companyUsers.find(u => u.name.toLowerCase() === employeeName.toLowerCase());
       if (!matchedUser) continue;
 
-      const startTime = startStr ? new Date(`${dateStr} ${startStr}`).toISOString() : new Date().toISOString();
-      const endTime = endStr && endStr !== 'Active' ? new Date(`${dateStr} ${endStr}`).toISOString() : '';
+      const startTime = (() => { try { const d = startStr ? new Date(`${dateStr} ${startStr}`) : new Date(); return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString(); } catch { return new Date().toISOString(); } })();
+      const endTime = (() => { try { if (!endStr || endStr === 'Active') return ''; const d = new Date(`${dateStr} ${endStr}`); return isNaN(d.getTime()) ? '' : d.toISOString(); } catch { return ''; } })();
 
       try {
         await client.api.fetch('/api/public/break-logs', {

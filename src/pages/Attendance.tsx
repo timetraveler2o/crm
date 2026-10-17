@@ -183,10 +183,10 @@ export default function Attendance() {
     
     // Build a map of date → status for this user & month
     const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
-    const entries = attendanceSheet.filter(e => e.userId === userId && e.date.startsWith(monthStr));
+    const entries = (attendanceSheet || []).filter(e => e && e.userId === userId && typeof e.date === "string" && e.date.startsWith(monthStr));
     const statusMap: Record<number, string> = {};
     entries.forEach(e => {
-      const dayNum = parseInt(e.date.split('-')[2], 10);
+      const dayNum = parseInt(String(e.date || "").split("-")[2], 10);
       if (dayNum >= 1 && dayNum <= elapsedDays) {
         statusMap[dayNum] = e.status;
       }
@@ -208,7 +208,7 @@ export default function Attendance() {
 
   const getUserSummary = (userId: number) => {
     const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
-    const entries = attendanceSheet.filter(e => e.userId === userId && e.date.startsWith(monthStr));
+    const entries = (attendanceSheet || []).filter(e => e && e.userId === userId && typeof e.date === "string" && e.date.startsWith(monthStr));
     const counts: Record<string, number> = {};
     entries.forEach(e => { counts[e.status] = (counts[e.status] || 0) + 1; });
     return counts;
@@ -287,7 +287,7 @@ export default function Attendance() {
   const getSummary = () => {
     const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
     const activeUserIds = new Set(allFilteredUsers.map(u => u.id));
-    const monthEntries = attendanceSheet.filter(e => e.date.startsWith(monthStr) && activeUserIds.has(e.userId));
+    const monthEntries = (attendanceSheet || []).filter(e => e && typeof e.date === "string" && e.date.startsWith(monthStr) && activeUserIds.has(e.userId));
     const counts: Record<string, number> = {};
     ATTENDANCE_STATUSES.forEach(s => { counts[s.value] = 0; });
     monthEntries.forEach(e => { if (counts[e.status] !== undefined) counts[e.status]++; });
@@ -665,7 +665,7 @@ export default function Attendance() {
   const viewLogs = (userId: number, type: 'attendance' | 'leave', dateOrYear: string | number) => {
     if (type === 'attendance') {
       const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
-      const userEntries = attendanceSheet.filter(e => e.userId === userId && e.date.startsWith(monthStr));
+      const userEntries = (attendanceSheet || []).filter(e => e && e.userId === userId && typeof e.date === "string" && e.date.startsWith(monthStr));
       const allLogs: any[] = [];
       userEntries.forEach(e => {
         const logsField = (e as any)?.logs;

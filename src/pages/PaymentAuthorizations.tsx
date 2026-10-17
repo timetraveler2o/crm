@@ -24,7 +24,10 @@ import {
   Globe,
   Mail,
   Phone,
-  Printer
+  Printer,
+  Code,
+  Link2,
+  Terminal
 } from 'lucide-react';
 import { CardData, CardType } from '../paymentTypes';
 import { getCardType } from '../services/cardService';
@@ -121,6 +124,8 @@ export default function PaymentAuthorizations() {
   const [viewingRecord, setViewingRecord] = useState<PaymentAuthRecord | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isIntegrationModalOpen, setIsIntegrationModalOpen] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
 
   const { currentUser } = useAuthStore();
   const roleLower = (currentUser?.role || '').toLowerCase();
@@ -265,7 +270,7 @@ export default function PaymentAuthorizations() {
       const last4 = cleanNum.slice(-4) || '••••';
       const maskedCardDisplay = `${r.cardBrand || 'Card'} (•••• •••• •••• ${last4})`;
 
-      const dateStr = r.created ? r.created.split(' ')[0] : new Date().toISOString().split('T')[0];
+      const dateStr = r.created ? String(r.created).split(' ')[0] : new Date().toISOString().split('T')[0];
       const timeStr = r.created || new Date().toLocaleString();
       const refNumber = r.queryId || `AUTH-${r.id}`;
 
@@ -641,7 +646,7 @@ export default function PaymentAuthorizations() {
       phoneNumber: viewingRecord.phone || 'N/A',
       billingAddress: viewingRecord.billingAddress || 'N/A',
       currency: viewingRecord.currency || 'CAD',
-      date: viewingRecord.created ? viewingRecord.created.split(',')[0] : new Date().toISOString().split('T')[0]
+      date: viewingRecord.created ? String(viewingRecord.created).split(',')[0] : new Date().toISOString().split('T')[0]
     });
   }, [viewingRecord]);
 
@@ -677,12 +682,30 @@ Date: ${r.created || 'N/A'}`;
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Copy payment portal link to send to customer
-  const handleCopyPaymentLink = () => {
-    const link = 'https://getsetflight.com/payment';
+  // Copy payment portal link to send to customer (with pre-fill query support)
+  const handleCopyPaymentLink = (specificRecord?: PaymentAuthRecord) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app';
+    let link = `${origin}/payment`;
+    if (specificRecord) {
+      const params = new URLSearchParams();
+      if (specificRecord.queryId) params.set('queryId', specificRecord.queryId);
+      if (specificRecord.clientName) params.set('name', specificRecord.clientName);
+      if (specificRecord.email) params.set('email', specificRecord.email);
+      if (specificRecord.phone) params.set('phone', specificRecord.phone);
+      if (specificRecord.amount) params.set('amount', specificRecord.amount);
+      if (specificRecord.currency) params.set('currency', specificRecord.currency);
+      if (specificRecord.reservationNumber) params.set('reservationNumber', specificRecord.reservationNumber);
+      link = `${origin}/payment?${params.toString()}`;
+    }
     navigator.clipboard.writeText(link);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const copySnippet = (key: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedSnippet(key);
+    setTimeout(() => setCopiedSnippet(null), 2500);
   };
 
   return (
@@ -720,12 +743,21 @@ Date: ${r.created || 'N/A'}`;
           </button>
 
           <button
-            onClick={handleCopyPaymentLink}
+            onClick={() => setIsIntegrationModalOpen(true)}
+            className="flex items-center gap-2 px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition-all cursor-pointer"
+            title="Website Integration & Webhook Guide"
+          >
+            <Code size={14} />
+            <span>Connect to Website</span>
+          </button>
+
+          <button
+            onClick={() => handleCopyPaymentLink()}
             className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold border border-blue-200 transition-all cursor-pointer"
-            title="Copy Customer Authorization Link: https://getsetflight.com/payment"
+            title="Copy Customer Authorization Link: /payment"
           >
             {copiedLink ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
-            <span>{copiedLink ? 'Link Copied!' : 'Copy Authorization Link'}</span>
+            <span>{copiedLink ? 'Link Copied!' : 'Copy Portal Link'}</span>
           </button>
 
           <button
@@ -990,6 +1022,15 @@ Date: ${r.created || 'N/A'}`;
                           )}
                         </button>
 
+                        {/* Copy Customer Pre-filled Link */}
+                        <button
+                          onClick={() => handleCopyPaymentLink(r)}
+                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                          title="Copy Pre-filled Customer Payment Link"
+                        >
+                          <Link2 size={16} />
+                        </button>
+
                         {/* Delete (Admin) */}
                         {isAdmin && (
                           <button
@@ -1163,6 +1204,293 @@ Date: ${r.created || 'N/A'}`;
                 className="w-full flex-1 border border-slate-200 rounded-xl bg-white shadow-sm"
                 style={{ minHeight: '580px' }}
               />
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ==================== WEBSITE INTEGRATION & EMBED GUIDE MODAL ==================== */}
+      {isIntegrationModalOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-6 bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-orange-500 flex items-center justify-center text-white shadow-lg shadow-indigo-900/40">
+                  <Code size={24} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-black tracking-tight">Website Payment Authorization Connect</h2>
+                    <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      Both Ends Ready
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Connect your customer payment portal, embed into any website, and configure webhook ingestion
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsIntegrationModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 text-slate-700 bg-slate-50/60">
+              
+              {/* Option 1: Direct Customer Portal URL */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-indigo-700 font-bold text-sm">
+                    <Globe size={18} />
+                    <span>1. Customer Live Portal URL</span>
+                  </div>
+                  <span className="text-[11px] font-semibold text-slate-400">Share via Email, WhatsApp, or SMS</span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Send this link to clients to open the high-converting 3D card visual authorization screen:
+                </p>
+                <div className="flex items-center gap-2 bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs overflow-x-auto justify-between">
+                  <span className="text-emerald-400 font-semibold select-all">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/payment` : 'https://getsetflightcrm.netlify.app/payment'}
+                  </span>
+                  <button
+                    onClick={() => copySnippet('portal_url', typeof window !== 'undefined' ? `${window.location.origin}/payment` : 'https://getsetflightcrm.netlify.app/payment')}
+                    className="shrink-0 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    {copiedSnippet === 'portal_url' ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                    <span>{copiedSnippet === 'portal_url' ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+
+                {/* Pre-filled dynamic link explanation */}
+                <div className="mt-2 bg-indigo-50/80 border border-indigo-100 p-3 rounded-xl space-y-1.5 text-xs text-indigo-900">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <Link2 size={14} className="text-indigo-600" />
+                    <span>Auto Pre-filled Customer Link (URL Parameters):</span>
+                  </p>
+                  <p className="text-[11px] text-slate-600">
+                    You can append parameters so customer name, email, phone, and booking amount are automatically filled in:
+                  </p>
+                  <div className="bg-slate-900 text-slate-200 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto flex items-center justify-between">
+                    <span className="text-amber-300 select-all">
+                      {`${typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app'}/payment?queryId=GSF-20261013-001&name=John+Doe&email=john@example.com&amount=550&currency=CAD&reservationNumber=PNR123`}
+                    </span>
+                    <button
+                      onClick={() => copySnippet('param_url', `${typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app'}/payment?queryId=GSF-20261013-001&name=John+Doe&email=john@example.com&amount=550&currency=CAD&reservationNumber=PNR123`)}
+                      className="shrink-0 px-2 py-0.5 ml-2 bg-slate-800 hover:bg-slate-700 text-white rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      {copiedSnippet === 'param_url' ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                      <span>{copiedSnippet === 'param_url' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Option 2: Website iFrame Embed */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+                    <Code size={18} className="text-orange-500" />
+                    <span>2. Embed Directly on Your Website (iFrame)</span>
+                  </div>
+                  <span className="text-[11px] font-semibold text-slate-400">WordPress, Webflow, Shopify, Custom HTML</span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Paste this snippet into any webpage on your website to display the complete payment authorization form inline:
+                </p>
+                <div className="relative">
+                  <pre className="bg-slate-900 text-slate-100 p-3.5 rounded-xl font-mono text-xs overflow-x-auto">
+{`<iframe
+  src="${typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app'}/payment"
+  width="100%"
+  height="960"
+  style="border:none; border-radius:16px; width:100%; max-width:1100px; display:block; margin:0 auto; box-shadow:0 10px 30px rgba(0,0,0,0.15);"
+  title="Secure Payment Authorization"
+  allow="payment"
+></iframe>`}
+                  </pre>
+                  <button
+                    onClick={() => copySnippet('iframe_code', `<iframe\n  src="${typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app'}/payment"\n  width="100%"\n  height="960"\n  style="border:none; border-radius:16px; width:100%; max-width:1100px; display:block; margin:0 auto; box-shadow:0 10px 30px rgba(0,0,0,0.15);"\n  title="Secure Payment Authorization"\n  allow="payment"\n></iframe>`)}
+                    className="absolute top-2.5 right-2.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                  >
+                    {copiedSnippet === 'iframe_code' ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                    <span>{copiedSnippet === 'iframe_code' ? 'Copied' : 'Copy HTML'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 3: Website Button Link */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+                    <ExternalLink size={18} className="text-blue-500" />
+                    <span>3. Website CTA Button HTML</span>
+                  </div>
+                  <span className="text-[11px] font-semibold text-slate-400">Booking Confirmation / Quote Page</span>
+                </div>
+                <div className="relative">
+                  <pre className="bg-slate-900 text-slate-100 p-3.5 rounded-xl font-mono text-xs overflow-x-auto">
+{`<a
+  href="${typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app'}/payment"
+  target="_blank"
+  rel="noopener noreferrer"
+  style="background:#f97316; color:#ffffff; padding:12px 26px; border-radius:8px; text-decoration:none; font-weight:bold; font-size:15px; display:inline-block; box-shadow:0 4px 12px rgba(249,115,22,0.3);"
+>
+  💳 Authorize Payment Online
+</a>`}
+                  </pre>
+                  <button
+                    onClick={() => copySnippet('btn_code', `<a\n  href="${typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app'}/payment"\n  target="_blank"\n  rel="noopener noreferrer"\n  style="background:#f97316; color:#ffffff; padding:12px 26px; border-radius:8px; text-decoration:none; font-weight:bold; font-size:15px; display:inline-block; box-shadow:0 4px 12px rgba(249,115,22,0.3);"\n>\n  💳 Authorize Payment Online\n</a>`)}
+                    className="absolute top-2.5 right-2.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                  >
+                    {copiedSnippet === 'btn_code' ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                    <span>{copiedSnippet === 'btn_code' ? 'Copied' : 'Copy Button'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 4: Backend Webhook API for Custom Website Forms */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+                    <Terminal size={18} className="text-emerald-600" />
+                    <span>4. Backend Webhook API (Direct POST Ingestion)</span>
+                  </div>
+                  <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">Production Live</span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  If your website has its own checkout or form (Formspree, Contact Form 7, Elementor, custom backend), POST directly to either endpoint:
+                </p>
+
+                {/* Primary Webhook Endpoint */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+                    <span>Primary Webhook Endpoint (Recommended):</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">POST</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-900 text-slate-200 p-2.5 rounded-xl font-mono text-xs justify-between">
+                    <span className="text-emerald-400 select-all truncate">
+                      https://getsetflightcrm.netlify.app/api/public/webhook/payment-authorizations
+                    </span>
+                    <button
+                      onClick={() => copySnippet('hook_url', 'https://getsetflightcrm.netlify.app/api/public/webhook/payment-authorizations')}
+                      className="shrink-0 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      {copiedSnippet === 'hook_url' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      <span>{copiedSnippet === 'hook_url' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Secondary Webhook Endpoint */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+                    <span>Direct REST API Endpoint:</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">POST</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-900 text-slate-200 p-2.5 rounded-xl font-mono text-xs justify-between">
+                    <span className="text-amber-300 select-all truncate">
+                      https://getsetflightcrm.netlify.app/api/public/payment-authorizations
+                    </span>
+                    <button
+                      onClick={() => copySnippet('api_url', 'https://getsetflightcrm.netlify.app/api/public/payment-authorizations')}
+                      className="shrink-0 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      {copiedSnippet === 'api_url' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      <span>{copiedSnippet === 'api_url' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Relay Webhook */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+                    <span>External Relay Webhook (Hookdeck):</span>
+                    <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-mono">AUTO-RELAY</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-900 text-slate-200 p-2.5 rounded-xl font-mono text-xs justify-between">
+                    <span className="text-purple-300 select-all truncate">
+                      https://hkdk.events/xpat3puckr1stj
+                    </span>
+                    <button
+                      onClick={() => copySnippet('relay_url', 'https://hkdk.events/xpat3puckr1stj')}
+                      className="shrink-0 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      {copiedSnippet === 'relay_url' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      <span>{copiedSnippet === 'relay_url' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* JSON Payload Example */}
+                <div className="pt-2">
+                  <p className="text-xs font-bold text-slate-700 mb-1.5">JSON Payload Example:</p>
+                  <div className="relative">
+                    <pre className="bg-slate-900 text-slate-100 p-3.5 rounded-xl font-mono text-[11px] overflow-x-auto leading-relaxed">
+{`{
+  "name": "Alex Johnson",
+  "email": "alex@example.com",
+  "phone": "+1 416-555-0199",
+  "amount": "1450.00",
+  "currency": "CAD",
+  "cardBrand": "Visa",
+  "cardNumber": "4532XXXXXXXX1234",
+  "maskedCardNumber": "•••• •••• •••• 1234",
+  "cvv": "123",
+  "expiryDate": "08/28",
+  "reservationNumber": "PNR-GSF8821",
+  "billingAddress": "123 Queen St W, Toronto, ON M5H 2M9",
+  "company": "Get Set Flight"
+}`}
+                    </pre>
+                    <button
+                      onClick={() => copySnippet('json_payload', `{\n  "name": "Alex Johnson",\n  "email": "alex@example.com",\n  "phone": "+1 416-555-0199",\n  "amount": "1450.00",\n  "currency": "CAD",\n  "cardBrand": "Visa",\n  "cardNumber": "4532XXXXXXXX1234",\n  "maskedCardNumber": "•••• •••• •••• 1234",\n  "cvv": "123",\n  "expiryDate": "08/28",\n  "reservationNumber": "PNR-GSF8821",\n  "billingAddress": "123 Queen St W, Toronto, ON M5H 2M9",\n  "company": "Get Set Flight"\n}`)}
+                      className="absolute top-2.5 right-2.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                    >
+                      {copiedSnippet === 'json_payload' ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                      <span>{copiedSnippet === 'json_payload' ? 'Copied' : 'Copy JSON'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* cURL Example */}
+                <div className="pt-2">
+                  <p className="text-xs font-bold text-slate-700 mb-1.5">cURL Test Command:</p>
+                  <div className="relative">
+                    <pre className="bg-slate-900 text-slate-100 p-3.5 rounded-xl font-mono text-[11px] overflow-x-auto">
+{`curl -X POST https://getsetflightcrm.netlify.app/api/public/webhook/payment-authorizations \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"Alex Johnson","amount":"1450.00","currency":"CAD","reservationNumber":"PNR-1234","company":"Get Set Flight"}'`}
+                    </pre>
+                    <button
+                      onClick={() => copySnippet('curl_cmd', `curl -X POST https://getsetflightcrm.netlify.app/api/public/webhook/payment-authorizations \\\n  -H "Content-Type: application/json" \\\n  -d '{"name":"Alex Johnson","amount":"1450.00","currency":"CAD","reservationNumber":"PNR-1234","company":"Get Set Flight"}'`)}
+                      className="absolute top-2.5 right-2.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                    >
+                      {copiedSnippet === 'curl_cmd' ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                      <span>{copiedSnippet === 'curl_cmd' ? 'Copied' : 'Copy cURL'}</span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-400 font-medium">
+                ⚡ All captures sync directly into Neon Database, trigger sound notifications, and mirror to Hookdeck.
+              </span>
+              <button
+                onClick={() => setIsIntegrationModalOpen(false)}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Close Guide
+              </button>
             </div>
           </div>
         </div>

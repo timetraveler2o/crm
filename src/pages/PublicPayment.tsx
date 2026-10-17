@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   CreditCard as CardIcon, 
   ShieldCheck, 
@@ -56,6 +56,36 @@ export default function PublicPayment() {
     isThirdParty: false,
     passengerNames: '',
   });
+
+  // Pre-fill from URL query parameters (e.g. ?queryId=...&name=...&amount=...&currency=...)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      const name = sp.get('name') || sp.get('clientName') || '';
+      const email = sp.get('email') || '';
+      const phone = sp.get('phone') || '';
+      const amount = sp.get('amount') || '';
+      const currency = sp.get('currency') || '';
+      const reservation = sp.get('reservationNumber') || sp.get('pnr') || sp.get('queryId') || '';
+
+      if (name || email || phone || amount || reservation) {
+        const parts = name.trim().split(' ');
+        const firstName = parts[0] || '';
+        const lastName = parts.slice(1).join(' ') || '';
+        setCardData(prev => ({
+          ...prev,
+          name: name || prev.name,
+          firstName: firstName || prev.firstName,
+          lastName: lastName || prev.lastName,
+          email: email || prev.email,
+          phoneNumber: phone || prev.phoneNumber,
+          amount: amount || prev.amount,
+          currency: (currency && ['CAD', 'USD', 'INR', 'AUD'].includes(currency.toUpperCase())) ? currency.toUpperCase() : prev.currency,
+          reservationNumber: reservation || prev.reservationNumber,
+        }));
+      }
+    }
+  }, []);
 
   const [isFlipped, setIsFlipped] = useState(false);
   const [isCardVisible, setIsCardVisible] = useState(true);

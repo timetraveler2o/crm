@@ -1,3 +1,4 @@
+import ErrorBoundary from '../components/ErrorBoundary';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -5,7 +6,7 @@ import { useCrmStore } from '../store/crmStore';
 import { useThemeStore, THEMES, type ThemeName } from '../store/themeStore';
 import Avatar from '../components/Avatar';
 import { COMPANIES, getCompanyInfo, type CompanyId } from '../types';
-const RN_LOGO = 'https://getsetflight.com/get_set_flight_logo.png';
+const RN_LOGO = '/logo.png';
 import {
   LayoutDashboard, Shield, Users, ListChecks, Plane, Globe,
   Clock, BarChart3, Bell, User, LogOut, Menu, X, ChevronDown,
@@ -39,7 +40,6 @@ const ROUTE_PERMISSION_MAP: Record<string, string | null> = {
   '/login-activity': 'Login Activity',
   '/ip-whitelist': 'IP Whitelist',
   '/updates': null,
-  '/tests': null,
   '/payslip': null,
 };
 
@@ -59,7 +59,6 @@ const allNavItems = [
   { to: '/ip-whitelist', icon: Lock, label: 'IP Whitelist' },
   { to: '/updates', icon: Megaphone, label: 'Updates' },
   { to: '/payslip', icon: Receipt, label: 'Salary Slip' },
-  { to: '/tests', icon: ClipboardList, label: 'Tests' },
 ];
 
 // Pages that show notification badges
@@ -72,7 +71,7 @@ export default function MainLayout() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const { currentUser, logout, notifications, markNotificationRead, markAllRead, clearAllNotifications, unreadCount, getCompanyNotifications, fetchNotifications } = useAuthStore();
+  const { currentUser, logout, notifications, markNotificationRead, markAllRead, clearAllNotifications, deleteNotification, unreadCount, getCompanyNotifications, fetchNotifications } = useAuthStore();
   const { fetchData, siteBookings, bookings, activeBreak } = useCrmStore();
   const { currentTheme, setTheme } = useThemeStore();
   const [showThemePicker, setShowThemePicker] = useState(false);
@@ -117,16 +116,18 @@ export default function MainLayout() {
     const currentMin = now.getMinutes();
     const myName = currentUser?.name || '';
     
-    const callbackBookings = bookings.filter((b: any) => {
+    const callbackBookings = (Array.isArray(bookings) ? bookings : []).filter((b: any) => {
       if (b.queryStatus !== 'Call Back') return false;
       if (!b.callbackDate) return false;
       if (b.callbackDate !== today) return false;
       if (b.addedBy !== myName) return false;
       if (dismissedCallbacks.has(b.id)) return false;
       // If callbackTime is set, only show notification at/after that time
-      if (b.callbackTime) {
+      if (b.callbackTime && typeof b.callbackTime === 'string' && b.callbackTime.includes(':')) {
         const [h, m] = b.callbackTime.split(':').map(Number);
-        if (currentHour < h || (currentHour === h && currentMin < m)) return false;
+        if (!isNaN(h) && !isNaN(m)) {
+          if (currentHour < h || (currentHour === h && currentMin < m)) return false;
+        }
       }
       return true;
     });
@@ -143,7 +144,7 @@ export default function MainLayout() {
       const currentMin = now.getMinutes();
       const myName = currentUser?.name || '';
       
-      const callbackBookings = bookings.filter((b: any) => {
+      const callbackBookings = (Array.isArray(bookings) ? bookings : []).filter((b: any) => {
         if (b.queryStatus !== 'Call Back') return false;
         if (!b.callbackDate) return false;
         if (b.callbackDate !== today) return false;
@@ -315,7 +316,9 @@ export default function MainLayout() {
 
   // Calculate badge counts for sidebar items based on new/unread items
   const getCompanyFilter = (items: any[]) => {
+    if (!Array.isArray(items)) return [];
     return items.filter(item => {
+      if (!item) return false;
       const company = item.company;
       if (!company) return displayCompany === 'GSF';
       if (displayCompany === 'GSF') return company === 'Get Set Flight';
@@ -362,11 +365,15 @@ export default function MainLayout() {
     }
   }, [location.pathname, totalBookingsCount]);
 
-  const companyNotifications = getCompanyNotifications();
+  const companyNotifications = Array.isArray(getCompanyNotifications()) ? getCompanyNotifications() : [];
   if (unread > 0) badgeCounts['/updates'] = unread;
 
   // Payment authorizations live badge count
-  const paymentAuthUnread = companyNotifications.filter(n => !n.read && (n.title.toLowerCase().includes('payment') || n.title.includes('💳'))).length;
+  const paymentAuthUnread = companyNotifications.filter(n => {
+    if (!n || n.read) return false;
+    const title = String(n.title || '').toLowerCase();
+    return title.includes('payment') || title.includes('💳');
+  }).length;
   if (paymentAuthUnread > 0) badgeCounts['/payment-authorizations'] = paymentAuthUnread;
 
   const handleLogout = () => {
@@ -457,10 +464,10 @@ export default function MainLayout() {
         {(sidebarOpen || isMobile) && currentUser && (
           <div className="p-4 border-t border-white/10">
             <div className="flex items-center gap-3">
-              <Avatar src={currentUser.image} name={currentUser.name} className="w-8 h-8" textSize="text-sm" />
+              <Avatar src={currentUser?.image} name={currentUser?.name || 'User'} className="w-8 h-8" textSize="text-sm" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{currentUser.name}</p>
-                <p className="text-xs text-gray-400 truncate">{currentUser.role}</p>
+                <p className="text-sm font-medium truncate">{currentUser?.name || 'User'}</p>
+                <p className="text-xs text-gray-400 truncate">{currentUser?.role || 'Staff'}</p>
               </div>
               <button 
                 onClick={handleLogout} 
@@ -518,23 +525,26 @@ export default function MainLayout() {
                 <Palette size={20} />
               </button>
               {showThemePicker && (
-                <div className="fixed sm:absolute inset-x-0 sm:inset-x-auto bottom-0 sm:bottom-auto sm:right-0 sm:mt-2 w-full sm:w-[500px] lg:w-[600px] bg-white rounded-t-xl sm:rounded-xl shadow-xl border border-gray-100 p-4 z-50 max-h-[70vh] overflow-y-auto animate-slideUp sm:animate-fadeIn">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-semibold text-sm text-gray-900">Choose Theme</h3>
-                    <button onClick={() => setShowThemePicker(false)} className="sm:hidden p-1 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
+                <div className="fixed sm:absolute inset-x-0 sm:inset-x-auto bottom-0 sm:bottom-auto sm:right-0 sm:mt-2 w-full sm:w-[480px] bg-white rounded-t-xl sm:rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 max-h-[75vh] overflow-y-auto animate-slideUp sm:animate-fadeIn">
+                  <div className="flex items-center justify-between mb-3 border-b pb-2">
+                    <div>
+                      <h3 className="font-bold text-sm text-gray-900">Choose CRM Color Theme</h3>
+                      <p className="text-[11px] text-gray-500">Select your preferred color palette</p>
+                    </div>
+                    <button onClick={() => setShowThemePicker(false)} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-700"><X size={18} /></button>
                   </div>
-                  <div className="grid grid-cols-6 sm:grid-cols-8 lg:grid-cols-10 gap-1.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {(Object.entries(THEMES) as [ThemeName, typeof THEMES[ThemeName]][]).map(([key, theme]) => (
                       <button
                         key={key}
                         onClick={() => { setTheme(key); setShowThemePicker(false); }}
-                        className={`flex flex-col items-center gap-0.5 p-1.5 rounded-lg border-2 transition-all active:scale-95 ${
-                          currentTheme === key ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-gray-200'
+                        className={`flex items-center gap-2.5 p-2 rounded-xl border transition-all active:scale-95 text-left ${
+                          currentTheme === key ? 'border-blue-600 bg-blue-50/70 shadow-sm font-semibold' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                         }`}
                         title={theme.label}
                       >
-                        <div className="w-6 sm:w-7 h-6 sm:h-7 rounded-full shadow-sm border border-gray-200" style={{ backgroundColor: theme.preview }} />
-                        <span className="text-[7px] sm:text-[8px] text-gray-600 leading-tight text-center truncate w-full">{theme.label}</span>
+                        <div className="w-6 h-6 rounded-lg shadow-sm border border-black/10 flex-shrink-0" style={{ background: theme.preview }} />
+                        <span className="text-xs text-gray-800 truncate">{theme.label}</span>
                       </button>
                     ))}
                   </div>
@@ -571,20 +581,32 @@ export default function MainLayout() {
                       companyNotifications.map(n => (
                         <div 
                           key={n.id} 
-                          className={`px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0 ${!n.read ? 'bg-blue-50/50' : ''}`}
+                          className={`px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0 group relative ${!n.read ? 'bg-blue-50/50' : ''}`}
                           onClick={() => markNotificationRead(n.id)}
                         >
-                          <div className="flex items-start gap-3">
-                            <div className={`w-2 h-2 mt-1.5 rounded-full flex-shrink-0 ${
-                              n.type === 'info' ? 'bg-blue-500' : 
-                              n.type === 'success' ? 'bg-green-500' : 
-                              n.type === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
-                            }`} />
-                            <div>
-                              <p className={`text-sm ${!n.read ? 'font-medium text-gray-900' : 'text-gray-600'}`}>{n.title}</p>
-                              <p className="text-xs text-gray-500 mt-0.5">{n.message}</p>
-                              <p className="text-[10px] text-gray-400 mt-1">{n.created}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-3">
+                              <div className={`w-2 h-2 mt-1.5 rounded-full flex-shrink-0 ${
+                                n.type === 'info' ? 'bg-blue-500' : 
+                                n.type === 'success' ? 'bg-green-500' : 
+                                n.type === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
+                              }`} />
+                              <div>
+                                <p className={`text-sm ${!n.read ? 'font-medium text-gray-900' : 'text-gray-600'}`}>{n.title}</p>
+                                <p className="text-xs text-gray-500 mt-0.5">{n.message}</p>
+                                <p className="text-[10px] text-gray-400 mt-1">{n.created}</p>
+                              </div>
                             </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteNotification(n.id);
+                              }}
+                              className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200/50 opacity-60 group-hover:opacity-100 transition-opacity"
+                              title="Dismiss"
+                            >
+                              <X size={14} />
+                            </button>
                           </div>
                         </div>
                       ))
@@ -631,7 +653,9 @@ export default function MainLayout() {
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6" style={{ backgroundColor: 'var(--content-bg, #f9fafb)', backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed', backgroundRepeat: 'no-repeat' }}>
-          <Outlet />
+          <ErrorBoundary viewName="Page View">
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 

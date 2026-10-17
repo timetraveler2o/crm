@@ -1,3 +1,4 @@
+import { safeParsePnrDetails } from '../lib/utils';
 import { useState, useMemo } from 'react';
 import { useCrmStore } from '../store/crmStore';
 import { useAuthStore } from '../store/authStore';
@@ -22,7 +23,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 const CHART_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316', '#ec4899', '#14b8a6', '#6366f1'];
 
-const SUPPLIERS = ['INTER', 'SKYBIRD', 'ONKAR', 'RIYA (IXC)', 'CVFR', 'MONDEE', 'Other'];
+const SUPPLIERS = ['INTER', 'SKY', 'ONKAR', 'RIYA (IXC)', 'CVFR', 'MONDEE', 'Other'];
 
 export default function Reports() {
   const { bookings, users } = useCrmStore();
@@ -105,7 +106,7 @@ export default function Reports() {
       if (b.queryStatus === 'Sold') {
         acc[b.addedBy].sold++;
         try {
-          const pnrs: any[] = b.pnrDetails ? JSON.parse(b.pnrDetails) : [];
+          const pnrs: any[] = safeParsePnrDetails(b);
           pnrs.forEach((p: any) => { acc[b.addedBy].gpm += Number(p.gpm) || 0; });
         } catch {}
       }
@@ -138,14 +139,15 @@ export default function Reports() {
     const supplierMap: Record<string, { count: number; sold: number; gpm: number; commission: number }> = {};
     SUPPLIERS.forEach(s => { supplierMap[s] = { count: 0, sold: 0, gpm: 0, commission: 0 }; });
     filteredBookings.forEach(b => {
-      const supplier = (b as any).supplier || 'Other';
+      let supplier = (b as any).supplier || 'Other';
+      if (['SKYBIRD', 'SKY BIRD', 'Skybird'].includes(supplier)) supplier = 'SKY';
       const key = SUPPLIERS.includes(supplier) ? supplier : 'Other';
       if (!supplierMap[key]) supplierMap[key] = { count: 0, sold: 0, gpm: 0, commission: 0 };
       supplierMap[key].count++;
       if (b.queryStatus === 'Sold') {
         supplierMap[key].sold++;
         try {
-          const pnrs: any[] = b.pnrDetails ? JSON.parse(b.pnrDetails) : [];
+          const pnrs: any[] = safeParsePnrDetails(b);
           pnrs.forEach((p: any) => {
             supplierMap[key].gpm += Number(p.gpm) || 0;
             supplierMap[key].commission += Number(p.fee) || 0;
@@ -175,14 +177,19 @@ export default function Reports() {
     const d = new Date(now.getTime() - (trendDays - 1 - i) * 24 * 60 * 60 * 1000);
     const dateStr = d.toISOString().split('T')[0];
     const dayBookings = companyBookings.filter(b => {
-      if (!b.created) return false;
-      const createdDate = new Date(b.created).toISOString().split('T')[0];
-      return createdDate === dateStr;
+      if (!b || !b.created) return false;
+      try {
+        const bd = new Date(b.created);
+        if (isNaN(bd.getTime())) return false;
+        return bd.toISOString().split('T')[0] === dateStr;
+      } catch {
+        return false;
+      }
     });
     let dayGpm = 0;
     dayBookings.filter(b => b.queryStatus === 'Sold').forEach(b => {
       try {
-        const pnrs: any[] = b.pnrDetails ? JSON.parse(b.pnrDetails) : [];
+        const pnrs: any[] = safeParsePnrDetails(b);
         pnrs.forEach((p: any) => { dayGpm += Number(p.gpm) || 0; });
       } catch {}
     });
@@ -447,7 +454,7 @@ export default function Reports() {
                 <Plane size={16} className="text-blue-500" />
                 Supplier Analytics & Commission Tracking
               </h3>
-              <p className="text-xs text-gray-400 mt-0.5">INTER, SKYBIRD, ONKAR, RIYA (IXC), CVFR, MONDEE — Bookings, Sold & Commission</p>
+              <p className="text-xs text-gray-400 mt-0.5">INTER, SKY, ONKAR, RIYA (IXC), CVFR, MONDEE — Bookings, Sold & Commission</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse border border-gray-200">

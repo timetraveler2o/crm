@@ -2,7 +2,19 @@ import { neon } from '@neondatabase/serverless';
 
 export const NEON_DATABASE_URL = process.env.DATABASE_URL || '';
 
-export const neonSql = NEON_DATABASE_URL ? neon(NEON_DATABASE_URL) : ((() => { throw new Error('DATABASE_URL is not set'); }) as any);
+const rawNeon = NEON_DATABASE_URL ? neon(NEON_DATABASE_URL) : null;
+export const neonSql: any = Object.assign(
+  (query: any, ...params: any[]) => {
+    if (!rawNeon) return Promise.resolve([]);
+    if (typeof query === 'string' && params.length === 1 && Array.isArray(params[0])) {
+      return (rawNeon as any)(query, params[0]);
+    }
+    return (rawNeon as any)(query, ...params);
+  },
+  {
+    query: (query: string, params: any[] = []) => rawNeon ? (rawNeon as any)(query, params) : Promise.resolve([])
+  }
+);
 
 /**
  * Executes a parameterized SQL query on Neon PostgreSQL
@@ -114,8 +126,27 @@ export async function syncBookingToNeon(data: any): Promise<void> {
         "queryStatus" = EXCLUDED."queryStatus",
         modified = EXCLUDED.modified,
         pnr = EXCLUDED.pnr,
+        pnr_details = EXCLUDED.pnr_details,
+        images = EXCLUDED.images,
         remarks = EXCLUDED.remarks,
-        "partialPayment" = EXCLUDED."partialPayment"
+        "partialPayment" = EXCLUDED."partialPayment",
+        "firstName" = EXCLUDED."firstName",
+        "lastName" = EXCLUDED."lastName",
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
+        origin = EXCLUDED.origin,
+        destination = EXCLUDED.destination,
+        "departureDate" = EXCLUDED."departureDate",
+        "returnDate" = EXCLUDED."returnDate",
+        cabin = EXCLUDED.cabin,
+        adults = EXCLUDED.adults,
+        children = EXCLUDED.children,
+        infants = EXCLUDED.infants,
+        trip_type = EXCLUDED.trip_type,
+        currency = EXCLUDED.currency,
+        qc_status = EXCLUDED.qc_status,
+        company = EXCLUDED.company,
+        "addedBy" = EXCLUDED."addedBy"
     `, [
       data.queryId,
       data.addedBy || '',
@@ -249,6 +280,47 @@ export async function initNeonPaymentAuthTable(): Promise<void> {
     console.log('[Neon Cloud DB] payment_authorizations table ready in Neon.');
   } catch (err: any) {
     console.warn('[Neon Cloud DB] payment_authorizations table init notice:', err?.message);
+  }
+}
+
+/**
+ * Ensures client_verifications table exists in Neon PostgreSQL
+ */
+export async function initNeonClientVerificationsTable(): Promise<void> {
+  try {
+    await neonSql.query(`
+      CREATE TABLE IF NOT EXISTS client_verifications (
+        id SERIAL PRIMARY KEY,
+        booking_id INTEGER,
+        query_id TEXT,
+        token TEXT NOT NULL,
+        client_name TEXT,
+        client_email TEXT,
+        selfie_image TEXT,
+        selfie_image_back TEXT,
+        selfie_verified INTEGER DEFAULT 0,
+        selfie_ai_result TEXT,
+        document_type TEXT,
+        document_image TEXT,
+        document_verified INTEGER DEFAULT 0,
+        document_ai_result TEXT,
+        ip_address TEXT,
+        latitude TEXT,
+        longitude TEXT,
+        user_agent TEXT,
+        status TEXT DEFAULT 'pending',
+        submitted_at TEXT,
+        created TEXT,
+        company TEXT DEFAULT 'Get Set Flight',
+        reviewed_by TEXT,
+        review_status TEXT DEFAULT 'pending',
+        reviewed_at TEXT,
+        rejection_reason TEXT
+      );
+    `);
+    console.log('[Neon Cloud DB] client_verifications table verified in Neon.');
+  } catch (err: any) {
+    console.warn('[Neon Cloud DB] client_verifications table init notice:', err?.message);
   }
 }
 

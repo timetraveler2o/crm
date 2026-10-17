@@ -3,7 +3,7 @@ import { getImageUrl } from '../lib/api';
 
 interface AvatarProps {
   src?: string;
-  name: string;
+  name?: string;
   className?: string;
   textSize?: string;
 }
@@ -22,7 +22,8 @@ const nameColors = [
   'from-indigo-400 to-violet-500',
 ];
 
-function getColorForName(name: string): string {
+function getColorForName(name?: string): string {
+  if (!name || typeof name !== 'string') return nameColors[0];
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
@@ -30,22 +31,30 @@ function getColorForName(name: string): string {
   return nameColors[Math.abs(hash) % nameColors.length];
 }
 
-function getInitials(name: string): string {
+function getInitials(name?: string): string {
+  if (!name || typeof name !== 'string') return 'U';
   const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  return name ? name[0].toUpperCase() : '?';
+  if (parts.length >= 2 && parts[0] && parts[parts.length - 1]) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.trim() ? name.trim()[0].toUpperCase() : 'U';
 }
 
-export default function Avatar({ src, name, className = "w-8 h-8", textSize = "text-xs" }: AvatarProps) {
+export default function Avatar({ src, name = 'User', className = "w-8 h-8", textSize = "text-xs" }: AvatarProps) {
   const [url, setUrl] = useState<string>('');
   const [failed, setFailed] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const srcRef = useRef(src);
 
-  // Re-resolve the image from API (handles expired presigned URLs)
+  // Re-resolve the image from API (handles direct links, data URLs, and paths)
   const resolveImage = useCallback(async (imagePath: string) => {
-    if (imagePath.startsWith('http')) {
+    if (!imagePath) {
+      setUrl('');
+      return;
+    }
+    if (imagePath.startsWith('http') || imagePath.startsWith('data:')) {
       setUrl(imagePath);
+      setFailed(false);
     } else {
       try {
         const resolved = await getImageUrl(imagePath);
@@ -72,11 +81,11 @@ export default function Avatar({ src, name, className = "w-8 h-8", textSize = "t
     }
   }, [src, resolveImage]);
 
-  // Re-resolve presigned URLs every 30 minutes to prevent expiry
+  // Re-resolve presigned URLs every 30 minutes to prevent expiry (skip data/http URLs)
   useEffect(() => {
-    if (!src || src.startsWith('http')) return;
+    if (!src || src.startsWith('http') || src.startsWith('data:')) return;
     const interval = setInterval(() => {
-      if (srcRef.current && !srcRef.current.startsWith('http')) {
+      if (srcRef.current && !srcRef.current.startsWith('http') && !srcRef.current.startsWith('data:')) {
         resolveImage(srcRef.current);
       }
     }, 30 * 60 * 1000); // 30 minutes
@@ -84,16 +93,13 @@ export default function Avatar({ src, name, className = "w-8 h-8", textSize = "t
   }, [src, resolveImage]);
 
   const handleError = useCallback(() => {
-    if (retryCount < 3) {
-      // Re-resolve from API on error (handles expired presigned URLs)
+    if (retryCount < 2 && srcRef.current && !srcRef.current.startsWith('data:')) {
       setTimeout(() => {
         setRetryCount(prev => prev + 1);
         if (srcRef.current) {
           if (srcRef.current.startsWith('http')) {
-            // For direct URLs, try cache-busting
             setUrl(srcRef.current + (srcRef.current.includes('?') ? '&' : '?') + '_r=' + Date.now());
           } else {
-            // For R2 paths, re-resolve to get fresh presigned URL
             resolveImage(srcRef.current);
           }
         }
@@ -103,14 +109,15 @@ export default function Avatar({ src, name, className = "w-8 h-8", textSize = "t
     }
   }, [retryCount, resolveImage]);
 
-  const colorClass = getColorForName(name);
-  const initials = getInitials(name);
+  const safeName = name || 'User';
+  const colorClass = getColorForName(safeName);
+  const initials = getInitials(safeName);
 
   if (url && !failed) {
     return (
       <img
         src={url}
-        alt={name}
+        alt={safeName}
         className={`${className} rounded-full object-cover flex-shrink-0`}
         onError={handleError}
       />

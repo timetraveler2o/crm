@@ -60,8 +60,25 @@ const ALL_STATUSES = ['New Query', 'Follow Up', 'Hold', 'Closed Query', 'Send to
 // Partial payment statuses to show in the box
 const PARTIAL_PAYMENT_SHOW_STATUSES = ['Sold', 'Send to QC', 'Variance', 'Date Change', 'Hold', 'Cancellation'];
 
+
+// Safe ISO date parser that never throws RangeError: Invalid time value
+const safeIsoDate = (dateVal: any): string => {
+  if (!dateVal) return '';
+  try {
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString().split('T')[0];
+  } catch {
+    return '';
+  }
+};
+
 export default function Dashboard() {
-  const { queryStatuses, bookings, users } = useCrmStore();
+  const { queryStatuses = [], bookings = [], users = [], siteBookings = [] } = useCrmStore();
+  const safeSiteBookings = Array.isArray(siteBookings) ? siteBookings : [];
+  const safeBookings = Array.isArray(bookings) ? bookings : [];
+  const safeUsers = Array.isArray(users) ? users : [];
+  const safeQueryStatuses = Array.isArray(queryStatuses) ? queryStatuses : [];
   const { currentUser, activeCompany, isMultiCompanyAdmin, getUserCompany } = useAuthStore();
   const navigate = useNavigate();
   const [showGPM, setShowGPM] = useState(false);
@@ -108,10 +125,10 @@ export default function Dashboard() {
 
   const companyName = displayCompany === 'GSF' ? 'Get Set Flight' : displayCompany === 'LBT' ? 'Look Book Ticket' : 'Traveloboom';
   const userRole = currentUser?.role || '';
-  const visibleUpdates = updates.filter(u => {
-    if (dismissedIds.includes(u.id)) return false;
+  const visibleUpdates = (updates || []).filter(u => {
+    if (!u || dismissedIds.includes(u.id)) return false;
     // Check company targeting
-    const targets = (u.targetRoles || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const targets = String(u.targetRoles || '').split(',').map((s: string) => s.trim()).filter(Boolean);
     if (targets.length === 0 || targets.includes('All')) return true;
     // Check if any target matches current company
     const companyTargets = targets.filter((t: string) => t.startsWith('All '));
@@ -140,20 +157,40 @@ export default function Dashboard() {
   });
   const companyInfo = getCompanyInfo(displayCompany);
 
-  // Site bookings (forms) count for today
-  const { siteBookings } = useCrmStore();
-  const todayStr = new Date().toLocaleDateString('en-CA');
-  const companySiteBookings = siteBookings.filter(sb => {
+  // Site bookings (forms) count for today and total
+  const today = new Date();
+  const todayDateStr = today.toDateString();
+  const todayCA = today.toLocaleDateString('en-CA');
+  const dayNum = today.getDate();
+  const monthShort = today.toLocaleString('en-US', { month: 'short' });
+  const yearNum = today.getFullYear();
+
+  const isCreatedToday = (created?: any) => {
+    if (!created) return false;
+    const createdStr = String(created);
+    if (createdStr.startsWith(todayCA)) return true;
+    try {
+      const d = new Date(createdStr);
+      if (!isNaN(d.getTime()) && d.toDateString() === todayDateStr) return true;
+    } catch {}
+    if (createdStr.includes(`${dayNum} ${monthShort} ${yearNum}`) || createdStr.includes(`${String(dayNum).padStart(2, '0')} ${monthShort} ${yearNum}`)) {
+      return true;
+    }
+    return false;
+  };
+
+  const companySiteBookings = safeSiteBookings.filter(sb => {
     if (!sb.company) return displayCompany === 'GSF';
     if (displayCompany === 'GSF') return sb.company === 'Get Set Flight';
     if (displayCompany === 'LBT') return sb.company === 'Look Book Ticket';
-    if (displayCompany === 'travelo') return sb.company === 'Traveloboom' || sb.company === 'Traveloboom';
+    if (displayCompany === 'travelo') return sb.company === 'Traveloboom';
     return false;
   });
-  const todayForms = companySiteBookings.filter(sb => sb.created && sb.created.startsWith(todayStr)).length;
+  const todayForms = companySiteBookings.filter(sb => isCreatedToday(sb.created)).length;
+  const recentSiteBookings = [...companySiteBookings].sort((a, b) => (b.id || 0) - (a.id || 0)).slice(0, 5);
 
   // Filter users by company
-  const companyUsers = users.filter(u => {
+  const companyUsers = safeUsers.filter(u => {
     if (!u.company) return displayCompany === 'GSF';
     if (displayCompany === 'GSF') return u.company === 'Get Set Flight';
     if (displayCompany === 'LBT') return u.company === 'Look Book Ticket';
@@ -163,7 +200,7 @@ export default function Dashboard() {
 
   // Filter bookings based on role and company
   const isAgent = currentUser?.role === 'Agent';
-  const companyBookings = bookings.filter(b => {
+  const companyBookings = safeBookings.filter(b => {
     if (!b.company) return displayCompany === 'GSF';
     if (displayCompany === 'GSF') return b.company === 'Get Set Flight';
     if (displayCompany === 'LBT') return b.company === 'Look Book Ticket';
@@ -219,14 +256,14 @@ export default function Dashboard() {
     }
     if (fromDate) {
       filtered = filtered.filter(b => {
-        const cDate = b.created ? new Date(b.created).toISOString().split('T')[0] : '';
-        return cDate >= fromDate;
+        const cDate = safeIsoDate(b?.created);
+        return cDate && cDate >= fromDate;
       });
     }
     if (toDate) {
       filtered = filtered.filter(b => {
-        const cDate = b.created ? new Date(b.created).toISOString().split('T')[0] : '';
-        return cDate <= toDate;
+        const cDate = safeIsoDate(b?.created);
+        return cDate && cDate <= toDate;
       });
     }
     return filtered;
@@ -244,17 +281,21 @@ export default function Dashboard() {
   // GPM Summary per user
   const gpmSummary = useMemo(() => {
     const map: Record<string, { count: number; totalGPM: number; totalSell: number; totalCost: number }> = {};
-    gpmBookings.forEach(b => {
+    (gpmBookings || []).forEach(b => {
+      if (!b) return;
       const agent = b.addedBy || 'Unknown';
       if (!map[agent]) map[agent] = { count: 0, totalGPM: 0, totalSell: 0, totalCost: 0 };
       map[agent].count++;
       try {
-        const pnrs = JSON.parse(b.pnrDetails || '[]');
-        pnrs.forEach((p: any) => {
-          map[agent].totalGPM += Number(p.gpm) || 0;
-          map[agent].totalSell += Number(p.sell) || 0;
-          map[agent].totalCost += Number(p.cost) || 0;
-        });
+        const pnrs = safeParsePnrDetails(b);
+        if (Array.isArray(pnrs)) {
+          pnrs.forEach((p: any) => {
+            if (!p) return;
+            map[agent].totalGPM += Number(p.gpm) || 0;
+            map[agent].totalSell += Number(p.sell) || 0;
+            map[agent].totalCost += Number(p.cost) || 0;
+          });
+        }
       } catch {}
     });
     return Object.entries(map).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.totalGPM - a.totalGPM);
@@ -266,7 +307,7 @@ export default function Dashboard() {
     const rows: string[][] = [];
     gpmBookings.forEach(b => {
       try {
-        const pnrs = JSON.parse(b.pnrDetails || '[]');
+        const pnrs = safeParsePnrDetails(b);
         if (pnrs.length === 0) {
           rows.push([b.addedBy || '', '', b.origin || '', b.destination || '', b.departureDate || '', b.airline || '', b.queryStatus || '', b.querySource || '', '', '', '', '', '', '', '', b.company || '']);
         }
@@ -287,31 +328,36 @@ export default function Dashboard() {
 
   // Build status cards - combine stored queryStatuses with default list
   const statusCards = ALL_STATUSES.map((name, index) => {
-    const existing = queryStatuses.find(qs => qs.name === name);
+    const existing = safeQueryStatuses.find(qs => qs && qs.name === name);
     return existing || { id: `temp-${index}`, name, color: '#000' };
   });
 
-  // Helper to extract IATA code from stored value
-  const getIata = (val: string) => {
+  // Helper to extract IATA code or clean location name properly without truncation
+  const getIata = (val: any) => {
     if (!val) return '';
-    // Check for bracket pattern [XXX]
-    const bracketMatch = val.match(/\[([A-Z]{3})\]/);
-    if (bracketMatch) return bracketMatch[1];
-    // If already a short code (3 letters), return as-is
-    const trimmed = val.trim().toUpperCase();
-    if (/^[A-Z]{3}$/.test(trimmed)) return trimmed;
-    // Split by " - " first
-    const dashPart = trimmed.split(' - ')[0].trim();
-    if (/^[A-Z]{3}$/.test(dashPart)) return dashPart;
-    // Try to extract first 3-letter uppercase word
-    const codeMatch = trimmed.match(/\b([A-Z]{3})\b/);
-    if (codeMatch) return codeMatch[1];
-    // Fallback: first word
-    return dashPart.split(/[\s,]/)[0].slice(0, 6);
+    const trimmed = String(val).trim();
+    if (!trimmed) return '';
+    // 1. Bracket pattern [XXX] or (XXX)
+    const bracketMatch = trimmed.match(/[\[\(]([A-Za-z]{3})[\]\)]/);
+    if (bracketMatch) return bracketMatch[1].toUpperCase();
+    // 2. Pure 3-letter IATA code
+    if (/^[A-Za-z]{3}$/.test(trimmed)) return trimmed.toUpperCase();
+    // 3. Prefix pattern like "DFW - Dallas/Fort Worth" or "YYZ: Toronto"
+    const prefixMatch = trimmed.match(/^([A-Za-z]{3})\s*[\-:\/|]/);
+    if (prefixMatch) return prefixMatch[1].toUpperCase();
+    // 4. Postfix pattern like "Toronto - YYZ" or "London / LHR"
+    const postfixMatch = trimmed.match(/[\-:\/|]\s*([A-Za-z]{3})$/);
+    if (postfixMatch) return postfixMatch[1].toUpperCase();
+    // 5. Look for standalone 3-letter uppercase code
+    const standaloneMatch = trimmed.match(/\b([A-Z]{3})\b/);
+    if (standaloneMatch) return standaloneMatch[1];
+    // 6. Return clean city/airport name without slicing
+    const clean = trimmed.split(' - ')[0].trim();
+    return clean || trimmed;
   };
 
   // Sort bookings by most recent first (newest id first)
-  const recentBookings = [...visibleBookings].sort((a, b) => b.id - a.id).slice(0, 8);
+  const recentBookings = [...visibleBookings].sort((a, b) => (Number(b?.id) || 0) - (Number(a?.id) || 0)).slice(0, 8);
 
   // Stats
   const totalBookings = visibleBookings.length;
@@ -365,7 +411,7 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <span className="text-xl sm:text-2xl">✈️</span> Welcome, {currentUser?.name?.split(' ')[0] || 'Agent'}!
+            <span className="text-xl sm:text-2xl">✈️</span> Welcome, {String(currentUser?.name || '').trim().split(' ')[0] || 'Agent'}!
           </h1>
           <p className="text-gray-500 text-sm mt-1">
             {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
@@ -385,10 +431,10 @@ export default function Dashboard() {
         <div className="card p-3 sm:p-4 bg-gradient-to-br from-rose-500 to-pink-700 text-white border-0 shadow-lg hover:shadow-xl transition-all cursor-pointer hover:-translate-y-0.5" onClick={() => navigate('/site-bookings')}>
           <div className="flex items-center justify-between mb-1.5 sm:mb-2">
             <FileText size={16} className="opacity-80 sm:w-[18px] sm:h-[18px]" />
-            <span className="text-[10px] sm:text-xs opacity-70 font-medium">FORMS</span>
+            <span className="text-[10px] sm:text-xs opacity-70 font-medium">SITE LEADS</span>
           </div>
           <p className="text-2xl sm:text-3xl font-bold">{todayForms}</p>
-          <p className="text-xs opacity-80 mt-1">Today's Forms</p>
+          <p className="text-xs opacity-80 mt-1">Today ({companySiteBookings.length} Total)</p>
         </div>
         <div className="card p-4 bg-gradient-to-br from-blue-500 to-blue-700 text-white border-0 shadow-lg hover:shadow-xl transition-all cursor-pointer hover:-translate-y-0.5" onClick={() => navigate('/bookings')}>
           <div className="flex items-center justify-between mb-2">
@@ -740,6 +786,73 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      {/* Recent Website Leads Section */}
+      <div className="card overflow-hidden">
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-rose-50 via-pink-50 to-white">
+          <div className="flex items-center gap-2">
+            <FileText size={18} className="text-rose-600" />
+            <h2 className="font-bold text-gray-800 text-base">Recent Website Form Leads</h2>
+            <span className="bg-rose-100 text-rose-700 text-xs px-2 py-0.5 rounded-full font-semibold">
+              {todayForms} Today / {companySiteBookings.length} Total
+            </span>
+          </div>
+          <button onClick={() => navigate('/site-bookings')} className="text-sm text-rose-600 font-semibold hover:underline flex items-center gap-1">
+            View All Site Bookings <ArrowRight size={14} />
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse border border-gray-200">
+            <thead className="bg-gray-50/80 border-b-2 border-gray-300">
+              <tr>
+                <th className="table-header">#</th>
+                <th className="table-header">Lead ID</th>
+                <th className="table-header">Passenger Name</th>
+                <th className="table-header">Contact</th>
+                <th className="table-header">Route</th>
+                <th className="table-header">Travel Date</th>
+                <th className="table-header">Assigned To</th>
+                <th className="table-header">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentSiteBookings.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="table-cell text-center text-gray-400 py-6">
+                    No website leads received yet. Forms submitted from the website will appear here in real-time.
+                  </td>
+                </tr>
+              ) : recentSiteBookings.map((sb, i) => (
+                <tr 
+                  key={sb.id} 
+                  className="hover:bg-rose-50/30 transition-colors cursor-pointer"
+                  onClick={() => navigate('/site-bookings')}
+                >
+                  <td className="table-cell font-medium text-gray-400 text-xs">{i + 1}</td>
+                  <td className="table-cell text-rose-600 font-semibold text-sm">{sb.queryId}</td>
+                  <td className="table-cell font-medium text-gray-900 text-sm">{sb.name}</td>
+                  <td className="table-cell text-xs text-gray-600">
+                    <div>{sb.phone || '—'}</div>
+                    <div className="text-gray-400">{sb.email}</div>
+                  </td>
+                  <td className="table-cell text-xs font-semibold">
+                    <span className="text-blue-700">{getIata(sb.origin)}</span>
+                    <span className="text-gray-300 mx-1">✈</span>
+                    <span className="text-blue-700">{getIata(sb.destination)}</span>
+                  </td>
+                  <td className="table-cell text-xs text-gray-500">{sb.departDate || sb.departureDate || '—'}</td>
+                  <td className="table-cell text-xs text-indigo-600 font-medium">{sb.assignedTo || sb.assignment || 'Unassigned'}</td>
+                  <td className="table-cell">
+                    <span className="badge text-xs bg-amber-100 text-amber-700 border border-amber-200">
+                      {sb.status || 'New'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

@@ -157,11 +157,11 @@ export default function Roles() {
               </tr>
             </thead>
             <tbody>
-              {sorted.slice((currentPage - 1) * perPage, currentPage * perPage).map(r => {
+              {sorted.slice((currentPage - 1) * perPage, currentPage * perPage).map((r, idx) => {
                 const perms = Array.isArray(r.permissions) ? r.permissions : [];
                 return (
                   <tr key={r.id} className="hover:bg-gray-50/50">
-                    <td className="table-cell font-medium">{r.id}</td>
+                    <td className="table-cell font-medium">{(currentPage - 1) * perPage + idx + 1}</td>
                     <td className="table-cell">{r.addedBy}</td>
                     <td className="table-cell font-semibold text-gray-900">{r.roleName}</td>
                     <td className="table-cell">

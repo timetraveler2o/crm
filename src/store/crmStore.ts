@@ -5,6 +5,24 @@ import { client } from '../lib/api';
 
 import { useAuthStore } from './authStore';
 
+
+// Universal booking normalizer ensuring both camelCase and snake_case properties are populated
+export const normalizeBooking = (b: any): any => {
+  if (!b) return b;
+  const pnrDetails = b.pnrDetails !== undefined ? b.pnrDetails : (b.pnr_details !== undefined ? b.pnr_details : '[]');
+  const tripType = b.tripType !== undefined ? b.tripType : (b.trip_type !== undefined ? b.trip_type : 'One Way');
+  const qcStatus = b.qcStatus !== undefined ? b.qcStatus : (b.qc_status !== undefined ? b.qc_status : 'NULL');
+  return {
+    ...b,
+    pnrDetails,
+    pnr_details: pnrDetails,
+    tripType,
+    trip_type: tripType,
+    qcStatus,
+    qc_status: qcStatus,
+  };
+};
+
 interface CrmState {
   roles: Role[];
   users: User[];
@@ -44,6 +62,7 @@ interface CrmState {
   deleteBooking: (id: number) => Promise<void>;
 
   // Site Booking actions
+  addSiteBooking: (data: Partial<any>) => Promise<void>;
   assignSiteBooking: (id: number, agent: string) => Promise<void>;
   updateSiteBooking: (id: number, data: Partial<any>) => Promise<void>;
   deleteSiteBooking: (id: number) => Promise<void>;
@@ -185,7 +204,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       set({
         users: parsedUsers,
         roles: roles.data || [],
-        bookings: bookings.data || [],
+        bookings: (bookings.data || []).map(normalizeBooking),
         attendanceSheet: sheet.data || [],
         leaveBalances: balances.data || [],
         queryStatuses: qs.data || [],
@@ -358,7 +377,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       }
       const data = await res.json();
       if (data.data) {
-        set((s) => ({ bookings: [data.data, ...s.bookings] }));
+        set((s) => ({ bookings: [normalizeBooking(data.data), ...s.bookings] }));
       } else {
         throw new Error('Failed to save booking - no data returned');
       }
@@ -380,12 +399,13 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       }
       const updated = await res.json();
       if (updated.data) {
-        set((s) => ({ bookings: s.bookings.map((b) => (b.id === id ? updated.data : b)) }));
-        return updated.data;
+        const norm = normalizeBooking(updated.data);
+        set((s) => ({ bookings: s.bookings.map((b) => (b.id === id ? norm : b)) }));
+        return norm;
       } else {
         // Backend returned success but no data — update local state with the sent data
-        const mergedData = { ...get().bookings.find(b => b.id === id), ...data, id, modified: new Date().toISOString() };
-        set((s) => ({ bookings: s.bookings.map((b) => (b.id === id ? { ...b, ...data, modified: new Date().toISOString() } : b)) }));
+        const mergedData = normalizeBooking({ ...get().bookings.find(b => b.id === id), ...data, id, modified: new Date().toISOString() });
+        set((s) => ({ bookings: s.bookings.map((b) => (b.id === id ? mergedData : b)) }));
         return mergedData;
       }
     } catch (err) {
@@ -404,7 +424,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       
       // Clean up images from storage
       if (booking?.images) {
-        const imagePaths = booking.images.split(',').filter(Boolean);
+        const imagePaths = typeof booking?.images === 'string' ? booking.images.split(',').filter(Boolean) : (Array.isArray(booking?.images) ? booking.images : []);
         for (const path of imagePaths) {
           try {
             await client.api.fetch('/api/public/upload/delete', {
@@ -417,6 +437,22 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       }
     } catch (err) {
       console.error('Failed to delete booking:', err);
+    }
+  },
+
+  addSiteBooking: async (data) => {
+    try {
+      const res = await client.api.fetch('/api/public/site-bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      const created = await res.json();
+      if (created.data) {
+        set((s) => ({ siteBookings: [created.data, ...s.siteBookings] }));
+      }
+    } catch (err) {
+      console.error('Failed to add site booking:', err);
     }
   },
 

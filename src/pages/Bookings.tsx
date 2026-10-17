@@ -1,12 +1,23 @@
+import { 
+  AttachmentDoc, 
+  parseAttachmentDocs, 
+  serializeAttachmentDocs, 
+  processUploadedFile, 
+  downloadAttachment, 
+  isImageDoc, 
+  getDocBadgeInfo, 
+  formatFileSize 
+} from '../lib/documentUtils';
+import AttachmentPreviewModal from '../components/AttachmentPreviewModal';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useCrmStore } from '../store/crmStore';
 import { QUERY_STATUSES, QUERY_SOURCES, CABINS, PnrDetail, RemarkEntry, SUPPLIERS, PAYMENT_METHODS } from '../types';
 import { AIRPORTS } from '../data/airports';
 import { uploadImage, getImageUrl, API_BASE_URL } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
-import { Plus, Search, Download, Upload, Edit2, Trash2, X, RotateCcw, Check, ChevronsUpDown, Image as ImageIcon, ArrowLeft, Eye, Mail, Loader2, ExternalLink, Printer, CheckSquare, Square, MinusSquare, ShieldCheck, Copy, Link2, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Search, Download, Upload, Edit2, Trash2, X, RotateCcw, Check, ChevronsUpDown, Image as ImageIcon, ArrowLeft, Eye, Mail, Loader2, ExternalLink, Printer, CheckSquare, Square, MinusSquare, ShieldCheck, Copy, Link2, CheckCircle, XCircle, CreditCard } from 'lucide-react';
 import Pagination from '../components/Pagination';
-import { formatDateDMY, formatDateTimeDMY } from '../lib/utils';
+import { formatDateDMY, formatDateTimeDMY, safeParsePnrDetails } from '../lib/utils';
 import { client } from '../lib/api';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { clearPageFilters, loadPageFilters, savePageFilters } from '../lib/useFilterPersistence';
@@ -232,7 +243,8 @@ export default function Bookings() {
   const [pnrDetails, setPnrDetails] = useState<PnrDetail[]>([{ pnr: '', firstName: '', lastName: '', airline: '', supplier: '', paymentMethod: '', cost: '' as any, sell: '' as any, fee: '' as any, mco: '' as any, gpm: '' as any }]);
   const [qcPnrDetails, setQcPnrDetails] = useState<PnrDetail[]>([]);
   const [selectedSupplier, setSelectedSupplier] = useState('');
-  const [images, setImages] = useState<string[]>([]);
+  const [images, setImages] = useState<AttachmentDoc[]>([]);
+  const [activePreviewDoc, setActivePreviewDoc] = useState<AttachmentDoc | null>(null);
   const [uploading, setUploading] = useState(false);
   const [originalQueryStatus, setOriginalQueryStatus] = useState<string>('');
   const [formErrors, setFormErrors] = useState<Record<string, boolean>>({});
@@ -289,111 +301,10 @@ export default function Bookings() {
     });
   }, [filters, selectedStatuses, selectedAgents, sortBy, currentPage, perPage]);
 
-  // Old CRM Data
-  const [showOldCRM, setShowOldCRM] = useState(false);
-  const [oldCRMData, setOldCRMData] = useState<any[]>([]);
-  const [oldCRMLoading, setOldCRMLoading] = useState(false);
-  const [oldCRMPage, setOldCRMPage] = useState(1);
-  const [oldCRMPerPage, setOldCRMPerPage] = useState(30);
+  // Admin check
+  const isAdmin = ['admin', 'super admin', 'superuser'].includes((currentUser?.role || '').toLowerCase());
   const [showAllAgentBookings, setShowAllAgentBookings] = useState(false);
 
-  // Helper: convert various date formats (D-Mon-YY, DD-Mon-YYYY, etc.) to DD-MM-YYYY
-  const convertOldCRMDate = (dateStr: string): string => {
-    if (!dateStr || dateStr === '—') return '';
-    // Already DD-MM-YYYY
-    if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) return dateStr;
-    // Try D-Mon-YY or DD-Mon-YY format (e.g., "8-Jan-27", "20-Apr-26")
-    const monthMap: Record<string, string> = {
-      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
-      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
-    };
-    const parts = dateStr.split('-');
-    if (parts.length === 3) {
-      const day = parts[0].trim();
-      const mon = parts[1].trim().toLowerCase();
-      const yr = parts[2].trim();
-      if (monthMap[mon]) {
-        const fullYear = yr.length === 2 ? (parseInt(yr) > 50 ? '19' + yr : '20' + yr) : yr;
-        return `${day.padStart(2, '0')}-${monthMap[mon]}-${fullYear}`;
-      }
-    }
-    // Try parsing as generic date
-    try {
-      const d = new Date(dateStr);
-      if (!isNaN(d.getTime()) && d.getFullYear() > 1900) {
-        const day = d.getDate().toString().padStart(2, '0');
-        const month = (d.getMonth() + 1).toString().padStart(2, '0');
-        return `${day}-${month}-${d.getFullYear()}`;
-      }
-    } catch {}
-    return dateStr;
-  };
-
-  const loadOldCRMData = useCallback(async () => {
-    if (oldCRMData.length > 0) return; // Already loaded
-    setOldCRMLoading(true);
-    try {
-      const res = await fetch('/old-crm-data.csv');
-      const text = await res.text();
-      const { parseCSV } = await import('../lib/dataImport');
-      const { rows } = parseCSV(text);
-      // Map old CRM fields to our schema
-      const mapped = rows.map((row: any, idx: number) => {
-        try {
-          const costVal = row.cost || row['OUR COST'] || '0';
-          const sellVal = row.sell || row['SELLING COST'] || '0';
-          const feeVal = row.fee || row['ISSUANCE'] || '0';
-          const gpmVal = row.gpm || row['GPM'] || '0';
-          // Fix: extract fullName from row.firstName (parseCSV maps NAME column to firstName)
-          const fullName = row.firstName || row['NAME'] || '';
-          const rawPhone = row.phone || row['CTC'] || '';
-          const rawDate = row.departureDate || row['DATE OF TRAVEL'] || '';
-          return {
-            id: -(idx + 1), // Negative IDs to distinguish from new
-            queryId: row.queryId || row['Quer ID'] || row['QUER ID'] || '',
-            addedBy: row.addedBy || row['Added By'] || '',
-            firstName: fullName.split(' ')[0] || '',
-            lastName: row.lastName || fullName.split(' ').slice(1).join(' ') || '',
-            email: row.email || row['EMAIL'] || '',
-            phone: rawPhone,
-            origin: row.origin || row['ORIGIN'] || (row['SECTORS'] || '').split('-')[0]?.trim() || '',
-            destination: row.destination || row['DESTINATION'] || (row['SECTORS'] || '').split('-')[1]?.trim() || '',
-            departureDate: convertOldCRMDate(rawDate),
-            airline: row.airline || row['AIRLINES'] || '',
-            queryStatus: row.queryStatus || row['QUERY STATUS'] || '',
-            querySource: row.querySource || row['SOURCE'] || '',
-            pnr: row.pnr || row['PNR'] || '',
-            partialPayment: row.partialPayment || row['PARTIAL PAYMENT'] || '',
-            pnrDetails: JSON.stringify([{
-              pnr: row.pnr || row['PNR'] || '',
-              ticket: row.ticket || row['TICKET'] || '',
-              partial: row.partialPayment || row['PARTIAL PAYMENT'] || '',
-              cost: costVal,
-              sell: sellVal,
-              fee: feeVal,
-              mco: feeVal,
-              gpm: gpmVal,
-              currency: row.currency || row['CURRENCY'] || 'CAD',
-            }]),
-            company: row.company || 'Get Set Flight',
-            created: '',
-            modified: '',
-            isOldCRM: true,
-          };
-        } catch (rowErr) {
-          console.warn('Skipping bad old CRM row', idx, rowErr);
-          return null;
-        }
-      }).filter(Boolean);
-      setOldCRMData(mapped);
-    } catch (err) {
-      console.error('Failed to load old CRM data:', err);
-    } finally {
-      setOldCRMLoading(false);
-    }
-  }, [oldCRMData.length]);
-
-  
   // Track processed URL to avoid re-processing on bookings update
   const urlProcessedRef = useRef<string | null>(null);
   
@@ -406,7 +317,6 @@ export default function Bookings() {
       isFirstFilterRender.current = false;
       return;
     }
-    setOldCRMPage(1);
     setCurrentPage(1);
   }, [filters, selectedStatuses, selectedAgents]);
 
@@ -505,23 +415,28 @@ export default function Bookings() {
   };
 
 
-  // Helper to extract IATA code from stored value (handles full airport names)
+  // Helper to extract IATA code or clean location name properly without truncation
   const getIata = (val: string) => {
     if (!val) return '';
-    // Check for bracket pattern [XXX]
-    const bracketMatch = val.match(/\[([A-Z]{3})\]/);
-    if (bracketMatch) return bracketMatch[1];
-    // If already a short code (3 letters), return as-is
-    const trimmed = val.trim().toUpperCase();
-    if (/^[A-Z]{3}$/.test(trimmed)) return trimmed;
-    // Split by " - " first (e.g., "DFW - Dallas/Fort Worth International")
-    const dashPart = trimmed.split(' - ')[0].trim();
-    if (/^[A-Z]{3}$/.test(dashPart)) return dashPart;
-    // Try to extract first 3-letter uppercase word
-    const codeMatch = trimmed.match(/\b([A-Z]{3})\b/);
-    if (codeMatch) return codeMatch[1];
-    // Fallback: first word
-    return dashPart.split(/[\s,]/)[0].slice(0, 6);
+    const trimmed = val.trim();
+    if (!trimmed) return '';
+    // 1. Bracket pattern [XXX] or (XXX)
+    const bracketMatch = trimmed.match(/[\[\(]([A-Za-z]{3})[\]\)]/);
+    if (bracketMatch) return bracketMatch[1].toUpperCase();
+    // 2. Pure 3-letter IATA code
+    if (/^[A-Za-z]{3}$/.test(trimmed)) return trimmed.toUpperCase();
+    // 3. Prefix pattern like "DFW - Dallas/Fort Worth" or "YYZ: Toronto"
+    const prefixMatch = trimmed.match(/^([A-Za-z]{3})\s*[\-:\/|]/);
+    if (prefixMatch) return prefixMatch[1].toUpperCase();
+    // 4. Postfix pattern like "Toronto - YYZ" or "London / LHR"
+    const postfixMatch = trimmed.match(/[\-:\/|]\s*([A-Za-z]{3})$/);
+    if (postfixMatch) return postfixMatch[1].toUpperCase();
+    // 5. Look for standalone 3-letter uppercase code
+    const standaloneMatch = trimmed.match(/\b([A-Z]{3})\b/);
+    if (standaloneMatch) return standaloneMatch[1];
+    // 6. Return clean city/airport name without slicing
+    const clean = trimmed.split(' - ')[0].trim();
+    return clean || trimmed;
   };
 
   // Filtered bookings
@@ -538,66 +453,6 @@ export default function Bookings() {
     }
     return null;
   };
-
-  const filteredOldCRMData = oldCRMData.filter(b => {
-    // Query ID filter - also search in combined fields for flexibility
-    if (filters.queryId) {
-      const qid = filters.queryId.toLowerCase();
-      const matchesQueryId = (b.queryId || '').toLowerCase().includes(qid);
-      if (!matchesQueryId) return false;
-    }
-    // First Name filter - search in firstName AND full name (firstName + lastName)
-    if (filters.firstName) {
-      const fn = filters.firstName.toLowerCase();
-      const fullName = ((b.firstName || '') + ' ' + (b.lastName || '')).toLowerCase();
-      if (!fullName.includes(fn) && !(b.firstName || '').toLowerCase().includes(fn)) return false;
-    }
-    // Last Name filter
-    if (filters.lastName) {
-      const ln = filters.lastName.toLowerCase();
-      const fullName = ((b.firstName || '') + ' ' + (b.lastName || '')).toLowerCase();
-      if (!(b.lastName || '').toLowerCase().includes(ln) && !fullName.includes(ln)) return false;
-    }
-    // Email filter
-    if (filters.email && !(b.email || '').toLowerCase().includes(filters.email.toLowerCase())) return false;
-    // Phone filter - strip non-digit chars for flexible matching
-    if (filters.phone) {
-      const filterDigits = filters.phone.replace(/[^0-9]/g, '');
-      const recordPhone = (b.phone || '').replace(/[^0-9]/g, '');
-      if (filterDigits && !recordPhone.includes(filterDigits)) return false;
-    }
-    if (filters.origin && !(b.origin || '').toLowerCase().includes(filters.origin.toLowerCase())) return false;
-    if (filters.destination && !(b.destination || '').toLowerCase().includes(filters.destination.toLowerCase())) return false;
-    if (filters.partialPayment && (b.partialPayment || '').toLowerCase() !== filters.partialPayment.toLowerCase()) return false;
-    if (selectedAgents.length > 0 && !selectedAgents.includes(b.addedBy)) return false;
-    if (selectedStatuses.length > 0 && !selectedStatuses.includes(b.queryStatus)) return false;
-    if (filters.querySource && b.querySource !== filters.querySource) return false;
-    // PNR filter - check both pnr field and pnrDetails for pipe-separated PNRs
-    if (filters.pnr) {
-      const pnrSearch = filters.pnr.toLowerCase();
-      const pnrField = (b.pnr || '').toLowerCase();
-      if (!pnrField.includes(pnrSearch)) {
-        // Also check inside pnrDetails (some rows have pipe-separated PNRs)
-        try {
-          const details = JSON.parse(b.pnrDetails || '[]');
-          const anyMatch = details.some((d: any) => (d.pnr || '').toLowerCase().includes(pnrSearch));
-          if (!anyMatch) return false;
-        } catch { return false; }
-      }
-    }
-    // Date range filter using departureDate (DD-MM-YYYY format after conversion)
-    if (filters.fromDate || filters.toDate) {
-      const isoDate = parseDDMMYYYY(b.departureDate || '');
-      if (isoDate) {
-        if (filters.fromDate && isoDate < filters.fromDate) return false;
-        if (filters.toDate && isoDate > filters.toDate) return false;
-      } else {
-        // If date can't be parsed, skip date filter for this record (don't exclude it)
-        // This allows other filters to still work on records with unparseable dates
-      }
-    }
-    return true;
-  });
 
   const filtered = bookings.filter(b => {
     // Company isolation - map activeCompany ID to full company names
@@ -635,12 +490,10 @@ export default function Bookings() {
     // Supplier filter
     if (selectedSupplier) {
       try {
-        if (b.pnrDetails) {
-          const details = JSON.parse(b.pnrDetails);
-          if (Array.isArray(details)) {
-            const hasSupplier = details.some((d: any) => d.supplier === selectedSupplier);
-            if (!hasSupplier) return false;
-          } else return false;
+        const details = safeParsePnrDetails(b);
+        if (Array.isArray(details) && details.length > 0) {
+          const hasSupplier = details.some((d: any) => d.supplier === selectedSupplier);
+          if (!hasSupplier) return false;
         } else return false;
       } catch { return false; }
     }
@@ -698,22 +551,20 @@ export default function Bookings() {
       let gpm = '';
       
       try {
-        if (b.pnrDetails) {
-          const details = JSON.parse(b.pnrDetails);
-          if (Array.isArray(details) && details.length > 0) {
-            pnrs = details.map((d: any) => d.pnr).filter(Boolean).join(' | ') || b.pnr;
-            airlines = details.map((d: any) => d.airline).filter(Boolean).join(' | ');
-            supplier = details.map((d: any) => d.supplier).filter(Boolean).join(' | ');
-            // Sum up numeric values instead of joining with pipes
-            const costSum = details.reduce((sum: number, d: any) => sum + (Number(d.cost) || 0), 0);
-            const sellSum = details.reduce((sum: number, d: any) => sum + (Number(d.sell) || 0), 0);
-            const feeSum = details.reduce((sum: number, d: any) => sum + (Number(d.fee) || 0), 0);
-            const gpmSum = details.reduce((sum: number, d: any) => sum + (Number(d.gpm) || 0), 0);
-            cost = costSum > 0 ? String(parseFloat(costSum.toFixed(2))) : '';
-            sell = sellSum > 0 ? String(parseFloat(sellSum.toFixed(2))) : '';
-            fee = feeSum > 0 ? String(parseFloat(feeSum.toFixed(2))) : '';
-            gpm = gpmSum !== 0 ? String(parseFloat(gpmSum.toFixed(2))) : '';
-          }
+        const details = safeParsePnrDetails(b);
+        if (Array.isArray(details) && details.length > 0) {
+          pnrs = details.map((d: any) => d.pnr).filter(Boolean).join(' | ') || b.pnr;
+          airlines = details.map((d: any) => d.airline).filter(Boolean).join(' | ');
+          supplier = details.map((d: any) => d.supplier).filter(Boolean).join(' | ');
+          // Sum up numeric values instead of joining with pipes
+          const costSum = details.reduce((sum: number, d: any) => sum + (Number(d.cost) || 0), 0);
+          const sellSum = details.reduce((sum: number, d: any) => sum + (Number(d.sell) || 0), 0);
+          const feeSum = details.reduce((sum: number, d: any) => sum + (Number(d.fee) || 0), 0);
+          const gpmSum = details.reduce((sum: number, d: any) => sum + (Number(d.gpm) || 0), 0);
+          cost = costSum > 0 ? String(parseFloat(costSum.toFixed(2))) : '';
+          sell = sellSum > 0 ? String(parseFloat(sellSum.toFixed(2))) : '';
+          fee = feeSum > 0 ? String(parseFloat(feeSum.toFixed(2))) : '';
+          gpm = gpmSum !== 0 ? String(parseFloat(gpmSum.toFixed(2))) : '';
         }
       } catch (e) {}
 
@@ -1027,18 +878,18 @@ export default function Bookings() {
     loadVerificationData(b.id);
     // Initialize QC PNR details when viewing a QC booking
     try {
-      if (b.pnrDetails) {
-        const parsed = JSON.parse(b.pnrDetails);
+      const parsed = safeParsePnrDetails(b);
+      if (parsed.length > 0) {
         setQcPnrDetails(parsed.map((p: any) => ({
           pnr: p.pnr || '', firstName: p.firstName || '', lastName: p.lastName || '',
           airline: p.airline || '', supplier: p.supplier || '', paymentMethod: p.paymentMethod || '', cost: p.cost || 0, sell: p.sell || 0,
           fee: p.fee || 0, mco: p.mco || 0, gpm: p.gpm || 0
         })));
       } else {
-        setQcPnrDetails([{ pnr: '', firstName: '', lastName: '', airline: '', supplier: '', paymentMethod: '', cost: 0, sell: 0, fee: 0, mco: 0, gpm: 0 }]);
+        setQcPnrDetails([{ pnr: b.pnr || '', firstName: b.firstName || '', lastName: b.lastName || '', airline: '', supplier: '', paymentMethod: '', cost: 0, sell: 0, fee: 0, mco: 0, gpm: 0 }]);
       }
     } catch {
-      setQcPnrDetails([{ pnr: '', firstName: '', lastName: '', airline: '', supplier: '', cost: 0, sell: 0, fee: 0, mco: 0, gpm: 0 }]);
+      setQcPnrDetails([{ pnr: b.pnr || '', firstName: b.firstName || '', lastName: b.lastName || '', airline: '', supplier: '', paymentMethod: '', cost: 0, sell: 0, fee: 0, mco: 0, gpm: 0 }]);
     }
   };
 
@@ -1228,23 +1079,23 @@ export default function Bookings() {
     if (!files || files.length === 0) return;
     setUploading(true);
     try {
-      const newImages = [...images];
+      const addedDocs: AttachmentDoc[] = [];
       for (let i = 0; i < files.length; i++) {
-        // Use uploadImage which compresses automatically
-        const path = await uploadImage(files[i]);
-        newImages.push(path);
+        const doc = await processUploadedFile(files[i]);
+        addedDocs.push(doc);
       }
-      setImages(newImages);
+      setImages(prev => [...prev, ...addedDocs]);
     } catch (err) {
       console.error("Upload failed", err);
-      alert("Failed to upload image");
+      alert("Failed to process file");
     } finally {
       setUploading(false);
+      if (e.target) e.target.value = '';
     }
   };
 
   const removeImage = (index: number) => {
-    setImages(images.filter((_, i) => i !== index));
+    setImages(prev => prev.filter((_, i) => i !== index));
   };
 
   const handlePreviewImage = async (imgPath: string) => {
@@ -1351,16 +1202,26 @@ export default function Bookings() {
       tripType: form.tripType,
       currency: form.currency,
       remarks: JSON.stringify(finalRemarks),
-      pnr: validPnrs.map(p => p.pnr).join(','),
+      pnr: validPnrs.map(p => p.pnr.trim()).join(','),
       pnrDetails: JSON.stringify(pnrDetails.map(p => ({
         ...p,
+        pnr: p.pnr ? p.pnr.trim().toUpperCase() : '',
         cost: Number(p.cost) || 0,
         sell: Number(p.sell) || 0,
         fee: Number(p.fee) || 0,
         mco: Number(p.mco) || 0,
         gpm: parseFloat((Number(p.gpm) || 0).toFixed(2))
       }))),
-      images: images.join(',')
+      pnr_details: JSON.stringify(pnrDetails.map(p => ({
+        ...p,
+        pnr: p.pnr ? p.pnr.trim().toUpperCase() : '',
+        cost: Number(p.cost) || 0,
+        sell: Number(p.sell) || 0,
+        fee: Number(p.fee) || 0,
+        mco: Number(p.mco) || 0,
+        gpm: parseFloat((Number(p.gpm) || 0).toFixed(2))
+      }))),
+      images: serializeAttachmentDocs(images)
     };
 
     // Add modification history entry for edits
@@ -1436,7 +1297,17 @@ export default function Bookings() {
     // Build modification history entry
     let modHistory: any[] = [];
     try { modHistory = JSON.parse((viewBooking as any).modificationHistory || '[]'); } catch {}
-    const oldPnrDetails = viewBooking.pnrDetails ? JSON.parse(viewBooking.pnrDetails) : [];
+    const oldPnrDetails = safeParsePnrDetails(viewBooking);
+    const serializedQcPnr = JSON.stringify(qcPnrDetails.map(p => ({
+      ...p,
+      pnr: p.pnr ? p.pnr.trim().toUpperCase() : '',
+      cost: Number(p.cost) || 0,
+      sell: Number(p.sell) || 0,
+      fee: Number(p.fee) || 0,
+      mco: Number(p.mco) || 0,
+      gpm: parseFloat((Number(p.gpm) || 0).toFixed(2))
+    })));
+
     modHistory.push({
       action: action === 'Accept' ? 'QC Accepted' : 'QC Rejected',
       modifiedBy: reviewerName,
@@ -1444,7 +1315,7 @@ export default function Bookings() {
       oldStatus: viewBooking.queryStatus,
       newStatus: newStatus,
       oldPnrDetails: JSON.stringify(oldPnrDetails),
-      newPnrDetails: JSON.stringify(qcPnrDetails),
+      newPnrDetails: serializedQcPnr,
       note: remarkText
     });
 
@@ -1454,10 +1325,8 @@ export default function Bookings() {
       qcReviewedBy: reviewerName,
       qcReviewedAt: formatLogDateTime(),
       modificationHistory: JSON.stringify(modHistory),
-      pnrDetails: JSON.stringify(qcPnrDetails.map(p => ({
-        ...p, cost: Number(p.cost) || 0, sell: Number(p.sell) || 0,
-        fee: Number(p.fee) || 0, mco: Number(p.mco) || 0, gpm: Number(p.gpm) || 0
-      })))
+      pnrDetails: serializedQcPnr,
+      pnr_details: serializedQcPnr
     });
     
     addNotification({ title: `QC ${action}ed`, message: `Booking ${viewBooking.queryId} has been ${action.toLowerCase()}ed by ${reviewerName}.`, type: action === 'Accept' ? 'success' : 'info' });
@@ -1482,39 +1351,15 @@ export default function Bookings() {
       .map(u => u.name)
   )];
 
-  // When old CRM is shown, merge old CRM unique agents, statuses, and sources into dropdown options
-  const oldCRMAgentNames = useMemo(() => {
-    if (!showOldCRM || oldCRMData.length === 0) return [];
-    return [...new Set(oldCRMData.map((b: any) => b.addedBy).filter(Boolean))];
-  }, [showOldCRM, oldCRMData]);
-
-  const oldCRMStatuses = useMemo(() => {
-    if (!showOldCRM || oldCRMData.length === 0) return [];
-    return [...new Set(oldCRMData.map((b: any) => b.queryStatus).filter(Boolean))];
-  }, [showOldCRM, oldCRMData]);
-
-  const oldCRMSources = useMemo(() => {
-    if (!showOldCRM || oldCRMData.length === 0) return [];
-    return [...new Set(oldCRMData.map((b: any) => b.querySource).filter(Boolean))];
-  }, [showOldCRM, oldCRMData]);
-
   const agentNames = useMemo(() => {
-    const merged = [...new Set([...baseAgentNames, ...oldCRMAgentNames])];
-    return merged.sort((a, b) => a.localeCompare(b));
-  }, [baseAgentNames, oldCRMAgentNames]);
+    return [...baseAgentNames].sort((a, b) => a.localeCompare(b));
+  }, [baseAgentNames]);
 
-  const statusOptions = useMemo(() => {
-    const merged = [...new Set([...QUERY_STATUSES, ...oldCRMStatuses])];
-    return merged;
-  }, [oldCRMStatuses]);
-
-  const sourceOptions = useMemo(() => {
-    const merged = [...new Set([...QUERY_SOURCES, ...oldCRMSources])];
-    return merged;
-  }, [oldCRMSources]);
+  const statusOptions = QUERY_STATUSES;
+  const sourceOptions = QUERY_SOURCES;
 
   const currentStatus = form.queryStatus?.trim() || '';
-  const showPnrSection = ['Date Change', 'Send to QC', 'Cancellation', 'Sold', 'Hold', 'Variance'].some(s => currentStatus.includes(s));
+  const showPnrSection = true; // Always allow PNR details for all queries
   const showImageSection = ['Date Change', 'Send to QC', 'Cancellation', 'Sold'].some(s => currentStatus.includes(s));
   
   // Check if current user can edit this booking
@@ -1557,18 +1402,6 @@ export default function Bookings() {
         </div>
       </div>
 
-      {/* Data Source Toggle: New CRM / Old CRM */}
-      <div className="flex items-center gap-2">
-        <button onClick={() => { setShowOldCRM(false); }} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${!showOldCRM ? 'bg-blue-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-          CRM Data
-        </button>
-        <button onClick={() => { setShowOldCRM(true); loadOldCRMData(); }} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${showOldCRM ? 'bg-blue-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-          Old CRM Data {oldCRMData.length > 0 ? `(${oldCRMData.length})` : ''}
-        </button>
-        {showOldCRM && oldCRMLoading && <span className="text-sm text-gray-500 animate-pulse">Loading...</span>}
-        {/* Agent toggle: My Bookings vs All Bookings */}
-        {/* Agents only see My Bookings - no All Bookings toggle */}
-      </div>
 
       {/* Bulk Delete Bar - only Admin, HR, IT can see */}
       {selectedIds.size > 0 && (['Admin', 'HR (Human Resource)', 'IT', 'IT (Information Tech)'].includes(currentUser?.role || '')) && (
@@ -1602,7 +1435,7 @@ export default function Bookings() {
                 {Object.entries(filters).filter(([k, v]) => v && k !== 'countryCode').length + (selectedStatuses.length > 0 ? 1 : 0) + (selectedAgents.length > 0 ? 1 : 0) + (selectedSupplier ? 1 : 0)} active
               </span>
             )}
-            <span className="text-xs text-gray-400">({showOldCRM ? filteredOldCRMData.length : filtered.length} results)</span>
+            <span className="text-xs text-gray-400">({filtered.length} results)</span>
           </div>
           <button onClick={resetFilters} className="text-xs text-gray-500 hover:text-red-600 flex items-center gap-1 px-2 py-1 hover:bg-red-50 rounded">
             <RotateCcw size={12} /> Clear All
@@ -1688,71 +1521,7 @@ export default function Bookings() {
         )}
       </div>
 
-      {/* Old CRM Data Table */}
-      {showOldCRM && (
-        <div className="card overflow-hidden">
-          <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-amber-50 to-orange-50">
-            <h3 className="font-bold text-gray-800">Old CRM Data ({filteredOldCRMData.length} records)</h3>
-            <p className="text-xs text-gray-500 mt-0.5">Imported historical booking data</p>
-          </div>
-          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-            <table className="w-full whitespace-nowrap text-sm border-collapse border border-gray-200">
-              <thead className="bg-gray-50 sticky top-0 border-b-2 border-gray-300">
-                <tr>
-                  <th className="table-header">#</th>
-                  <th className="table-header">Agent</th>
-                  <th className="table-header">Name</th>
-                  <th className="table-header">Email</th>
-                  <th className="table-header">Phone</th>
-                  <th className="table-header">Route</th>
-                  <th className="table-header">Date</th>
-                  <th className="table-header">Airlines</th>
-                  <th className="table-header">Status</th>
-                  <th className="table-header">PNR</th>
-                  <th className="table-header">Source</th>
-                  <th className="table-header">Cost</th>
-                  <th className="table-header">Sell</th>
-                  <th className="table-header">MCO</th>
-                  <th className="table-header">GPM</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredOldCRMData.length === 0 ? (
-                  <tr><td colSpan={15} className="p-8 text-center text-gray-400">{oldCRMLoading ? 'Loading old CRM data...' : 'No matching records found. Try adjusting your filters.'}</td></tr>
-                ) : filteredOldCRMData.slice((oldCRMPage - 1) * oldCRMPerPage, oldCRMPage * oldCRMPerPage).map((b: any, idx: number) => {
-                  let p: any = {};
-                  try { const pnrs = JSON.parse(b.pnrDetails || '[]'); p = pnrs[0] || {}; } catch { p = {}; }
-                  return (
-                    <tr key={b.id || idx} className="hover:bg-amber-50/30 transition-colors">
-                      <td className="table-cell text-xs text-gray-400">{(oldCRMPage - 1) * oldCRMPerPage + idx + 1}</td>
-                      <td className="table-cell text-xs font-medium">{b.addedBy || '-'}</td>
-                      <td className="table-cell text-xs">{b.firstName} {b.lastName}</td>
-                      <td className="table-cell text-xs text-gray-600 max-w-[150px] truncate" title={b.email || ''}>{b.email || '-'}</td>
-                      <td className="table-cell text-xs text-gray-600">{b.phone || '-'}</td>
-                      <td className="table-cell text-xs font-semibold text-blue-700">{b.origin} → {b.destination}</td>
-                      <td className="table-cell text-xs">{b.departureDate || '-'}</td>
-                      <td className="table-cell text-xs">{b.airline || '-'}</td>
-                      <td className="table-cell"><span className="badge bg-gray-100 text-gray-700 text-xs">{b.queryStatus || '-'}</span></td>
-                      <td className="table-cell text-xs font-mono uppercase">{b.pnr || '-'}</td>
-                      <td className="table-cell text-xs">{b.querySource || '-'}</td>
-                      <td className="table-cell text-xs font-medium">{p.cost && p.cost !== '0' ? p.cost : '-'}</td>
-                      <td className="table-cell text-xs font-medium text-blue-600">{p.sell && p.sell !== '0' ? p.sell : '-'}</td>
-                      <td className="table-cell text-xs">{p.mco && p.mco !== '0' ? p.mco : '-'}</td>
-                      <td className="table-cell text-xs font-semibold text-emerald-700">{p.gpm && p.gpm !== '0' ? p.gpm : '-'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {oldCRMData.length > 0 && (
-            <Pagination totalItems={filteredOldCRMData.length} currentPage={oldCRMPage} perPage={oldCRMPerPage} onPageChange={setOldCRMPage} onPerPageChange={(pp: number) => { setOldCRMPerPage(pp); setOldCRMPage(1); }} />
-          )}
-        </div>
-      )}
-
       {/* Table */}
-      {!showOldCRM && (
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full whitespace-nowrap border-collapse border border-gray-200">
@@ -1917,10 +1686,8 @@ export default function Bookings() {
           </table>
         </div>
       </div>
-      )}
 
       {/* Pagination */}
-      {!showOldCRM && (
       <Pagination
         totalItems={filtered.length}
         currentPage={currentPage}
@@ -1928,7 +1695,6 @@ export default function Bookings() {
         onPageChange={setCurrentPage}
         onPerPageChange={(pp) => { setPerPage(pp); setCurrentPage(1); }}
       />
-      )}
 
       {/* Bulk Delete Confirmation */}
       {confirmBulkDelete && (
@@ -2267,49 +2033,85 @@ export default function Bookings() {
                 </div>
               )}
 
-              {/* Image Upload Section with Preview */}
+              {/* Documents & Images Upload Section */}
               {showImageSection && (
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-3">Documents/Images</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
+                      Documents & Images ({images.length})
+                    </h3>
+                    <span className="text-xs text-gray-500">Supports PNG, JPG, PDF, Word, Excel, TXT</span>
+                  </div>
                   <div className="space-y-4">
                     <div className="flex flex-wrap gap-4">
-                      {images.map((img, idx) => {
-                        const displayUrl = resolvedImages[img] || (img.startsWith('http') ? img : '');
+                      {images.map((doc, idx) => {
+                        const isImg = isImageDoc(doc);
+                        const badge = getDocBadgeInfo(doc);
                         return (
-                          <div key={idx} className="relative group w-28 h-28 border-2 border-gray-200 rounded-lg overflow-hidden bg-gray-50">
-                            {displayUrl ? (
-                              <img src={displayUrl} alt="Doc" className="w-full h-full object-cover" />
+                          <div key={doc.id || idx} className="relative group w-28 h-28 border-2 border-gray-200 hover:border-blue-400 rounded-2xl overflow-hidden bg-gray-50 flex flex-col justify-between shadow-sm transition-all">
+                            {isImg ? (
+                              <img src={doc.url} alt={doc.name} className="w-full h-full object-cover" />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <ImageIcon size={24} className="text-gray-300" />
+                              <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center bg-gradient-to-b from-gray-50 to-gray-100">
+                                <span className="text-2xl mb-1">{badge.icon}</span>
+                                <span className="text-[10px] font-bold text-gray-800 truncate w-full px-1">{doc.name}</span>
+                                <span className="text-[9px] text-gray-400">{badge.label} {doc.size ? `• ${formatFileSize(doc.size)}` : ''}</span>
                               </div>
                             )}
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                              <button 
-                                onClick={() => handlePreviewImage(img)}
-                                className="bg-white text-gray-700 rounded-full p-1.5 hover:bg-blue-50 shadow-sm"
-                                title="Preview"
-                              >
-                                <Eye size={14} />
-                              </button>
-                              <button 
-                                onClick={() => removeImage(idx)}
-                                className="bg-white text-red-500 rounded-full p-1.5 hover:bg-red-50 shadow-sm"
-                                title="Remove"
-                              >
-                                <X size={14} />
-                              </button>
+
+                            {/* Hover Overlay */}
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-between p-2">
+                              <span className="text-[9px] text-white font-semibold truncate w-full text-center px-1">
+                                {doc.name}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <button 
+                                  type="button"
+                                  onClick={() => setActivePreviewDoc(doc)}
+                                  className="bg-white text-gray-700 rounded-full p-1.5 hover:bg-blue-50 shadow-md transition-transform hover:scale-110"
+                                  title="Preview"
+                                >
+                                  <Eye size={13} />
+                                </button>
+                                <button 
+                                  type="button"
+                                  onClick={() => downloadAttachment(doc)}
+                                  className="bg-white text-blue-600 rounded-full p-1.5 hover:bg-blue-50 shadow-md transition-transform hover:scale-110"
+                                  title="Download"
+                                >
+                                  <Download size={13} />
+                                </button>
+                                <button 
+                                  type="button"
+                                  onClick={() => removeImage(idx)}
+                                  className="bg-white text-red-500 rounded-full p-1.5 hover:bg-red-50 shadow-md transition-transform hover:scale-110"
+                                  title="Remove"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </div>
+                              <span className="text-[8px] text-white/80 font-medium">
+                                {formatFileSize(doc.size)}
+                              </span>
                             </div>
                           </div>
                         );
                       })}
-                      <label className="w-28 h-28 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors">
-                        <Upload size={24} className="text-gray-400" />
-                        <span className="text-xs text-gray-500 mt-1">Upload</span>
-                        <input type="file" className="hidden" multiple accept="image/*" onChange={handleImageUpload} disabled={uploading} />
+                      <label className="w-28 h-28 border-2 border-dashed border-gray-300 hover:border-blue-500 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-blue-50/50 transition-all group">
+                        <Upload size={22} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                        <span className="text-xs font-semibold text-gray-500 group-hover:text-blue-600 mt-1">Upload</span>
+                        <span className="text-[9px] text-gray-400">All formats</span>
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          multiple 
+                          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf" 
+                          onChange={handleImageUpload} 
+                          disabled={uploading} 
+                        />
                       </label>
                     </div>
-                    {uploading && <p className="text-sm text-blue-600 animate-pulse">Compressing & uploading...</p>}
+                    {uploading && <p className="text-xs text-blue-600 animate-pulse">Processing attachments...</p>}
                     {images.length > 0 && (
                       <p className="text-xs text-gray-400">Uploaded by: <span className="font-medium text-gray-600">{currentUser?.name || 'Admin'}</span></p>
                     )}
@@ -2352,6 +2154,33 @@ export default function Bookings() {
                   <p className="text-white/80 text-sm mt-0.5">by {viewBooking.addedBy || '—'} • {viewBooking.created}</p>
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* Copy Payment Auth Link Button */}
+                  <button
+                    onClick={() => {
+                      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://getsetflightcrm.netlify.app';
+                      const clientName = `${viewBooking.firstName || ''} ${viewBooking.lastName || ''}`.trim();
+                      const params = new URLSearchParams();
+                      if (viewBooking.queryId) params.set('queryId', viewBooking.queryId);
+                      if (clientName) params.set('name', clientName);
+                      if (viewBooking.email) params.set('email', viewBooking.email);
+                      if (viewBooking.phone) params.set('phone', viewBooking.phone);
+                      if (viewBooking.sellingCost) params.set('amount', String(viewBooking.sellingCost));
+                      if (viewBooking.currency) params.set('currency', viewBooking.currency);
+                      if (viewBooking.pnr) params.set('reservationNumber', viewBooking.pnr);
+                      const link = `${origin}/payment?${params.toString()}`;
+                      navigator.clipboard.writeText(link);
+                      addNotification({
+                        title: '💳 Payment Link Copied',
+                        message: `Pre-filled authorization link for ${clientName || viewBooking.queryId} copied!`,
+                        type: 'success'
+                      });
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
+                    title="Copy Pre-filled Customer Payment Authorization Link"
+                  >
+                    <CreditCard size={14} />
+                    Payment Link
+                  </button>
                   {/* Verify Client Button */}
                   <button
                     onClick={generateVerificationLink}
@@ -2594,54 +2423,48 @@ export default function Bookings() {
               </div>
 
               {/* PNR Details */}
-              {viewBooking.pnrDetails && viewBooking.pnrDetails !== '[]' && (
-                <div>
-                  <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">🎫 PNR Details</h3>
-                  <div className="overflow-x-auto bg-gray-50 rounded-xl">
-                    <table className="w-full text-sm border-collapse border border-gray-200">
-                      <thead>
-                        <tr className="border-b-2 border-gray-300">
-                          <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">PNR</th>
-                          <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Name</th>
-                          <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Airline</th>
-                          {isSupervisor && <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Supplier</th>}
-                          <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Sell</th>
-                          <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Cost</th>
-                          <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Fee</th>
-                          {(() => {
-                            try {
-                              const pnrs = JSON.parse(viewBooking.pnrDetails);
-                              return pnrs.some((p: any) => p.mco && p.mco > 0) ? <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">MCO</th> : null;
-                            } catch { return null; }
-                          })()}
-                          <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">GPM</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(() => {
-                          try {
-                            const pnrs = JSON.parse(viewBooking.pnrDetails);
-                            const hasMco = pnrs.some((p: any) => p.mco && p.mco > 0);
-                            return pnrs.map((p: any, i: number) => (
-                              <tr key={i} className="hover:bg-white transition-colors">
-                                <td className="p-3 font-mono font-bold text-indigo-600 border border-gray-200">{p.pnr}</td>
-                                <td className="p-3 border border-gray-200">{p.firstName} {p.lastName}</td>
-                                <td className="p-3 border border-gray-200">{p.airline}</td>
-                                {isSupervisor && <td className="p-3 border border-gray-200 font-medium text-orange-700">{p.supplier || '—'}</td>}
-                                <td className="p-3 font-medium border border-gray-200">${p.sell}</td>
-                                <td className="p-3 border border-gray-200">${p.cost}</td>
-                                <td className="p-3 border border-gray-200">${p.fee || 0}</td>
-                                {hasMco && <td className="p-3 border border-gray-200">${p.mco || 0}</td>}
-                                <td className="p-3 font-bold text-green-600 border border-gray-200">${typeof p.gpm === 'number' ? parseFloat(p.gpm.toFixed(2)) : (p.gpm || 0)}</td>
-                              </tr>
-                            ));
-                          } catch { return null; }
-                        })()}
-                      </tbody>
-                    </table>
+              {(() => {
+                const pnrs = safeParsePnrDetails(viewBooking);
+                if (pnrs.length === 0) return null;
+                const hasMco = pnrs.some((p: any) => p.mco && Number(p.mco) > 0);
+                return (
+                  <div>
+                    <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">🎫 PNR Details</h3>
+                    <div className="overflow-x-auto bg-gray-50 rounded-xl">
+                      <table className="w-full text-sm border-collapse border border-gray-200">
+                        <thead>
+                          <tr className="border-b-2 border-gray-300">
+                            <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">PNR</th>
+                            <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Name</th>
+                            <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Airline</th>
+                            {isSupervisor && <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Supplier</th>}
+                            <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Sell</th>
+                            <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Cost</th>
+                            <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">Fee</th>
+                            {hasMco && <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">MCO</th>}
+                            <th className="p-3 text-left text-[10px] font-bold text-gray-400 uppercase border border-gray-200">GPM</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pnrs.map((p: any, i: number) => (
+                            <tr key={i} className="hover:bg-white transition-colors">
+                              <td className="p-3 font-mono font-bold text-indigo-600 border border-gray-200">{p.pnr || '—'}</td>
+                              <td className="p-3 border border-gray-200">{p.firstName || ''} {p.lastName || ''}</td>
+                              <td className="p-3 border border-gray-200">{p.airline || '—'}</td>
+                              {isSupervisor && <td className="p-3 border border-gray-200 font-medium text-orange-700">{p.supplier || '—'}</td>}
+                              <td className="p-3 font-medium border border-gray-200">${p.sell || 0}</td>
+                              <td className="p-3 border border-gray-200">${p.cost || 0}</td>
+                              <td className="p-3 border border-gray-200">${p.fee || 0}</td>
+                              {hasMco && <td className="p-3 border border-gray-200">${p.mco || 0}</td>}
+                              <td className="p-3 font-bold text-green-600 border border-gray-200">${typeof p.gpm === 'number' ? parseFloat(p.gpm.toFixed(2)) : (p.gpm || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Partial Payment Section - Clear Dues (Admin/Manager/Supervisor only) */}
               {viewBooking.partialPayment === 'Yes' && (
@@ -2697,29 +2520,68 @@ export default function Bookings() {
                 </div>
               )}
 
-              {/* Uploaded Images */}
-              {viewBooking.images && (
-                <div>
-                  <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">📎 Documents</h3>
-                  <div className="flex flex-wrap gap-3">
-                    {viewBooking.images.split(',').filter(Boolean).map((img: string, idx: number) => {
-                      const displayUrl = resolvedImages[img] || (img.startsWith('http') ? img : '');
-                      return (
-                        <div key={idx} className="relative group w-24 h-24 border border-gray-200 rounded-xl overflow-hidden bg-gray-50 cursor-pointer shadow-sm hover:shadow-md transition-all" onClick={() => handlePreviewImage(img)}>
-                          {displayUrl ? (
-                            <img src={displayUrl} alt="Doc" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center"><ImageIcon size={20} className="text-gray-300" /></div>
-                          )}
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
-                            <Eye size={18} className="text-white" />
+              {/* Uploaded Documents & Images with Live Preview & Download */}
+              {(() => {
+                const docs = parseAttachmentDocs(viewBooking.images);
+                if (docs.length === 0) return null;
+                return (
+                  <div>
+                    <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+                      📎 Documents & Attachments ({docs.length})
+                    </h3>
+                    <div className="flex flex-wrap gap-3">
+                      {docs.map((doc, idx) => {
+                        const isImg = isImageDoc(doc);
+                        const badge = getDocBadgeInfo(doc);
+                        return (
+                          <div 
+                            key={doc.id || idx} 
+                            className="relative group w-28 h-28 border border-gray-200 hover:border-blue-400 rounded-2xl overflow-hidden bg-gray-50 cursor-pointer shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+                          >
+                            {isImg ? (
+                              <img src={doc.url} alt={doc.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center bg-gradient-to-b from-gray-50 to-gray-100">
+                                <span className="text-3xl mb-1">{badge.icon}</span>
+                                <span className="text-[10px] font-bold text-gray-800 truncate w-full px-1">{doc.name}</span>
+                                <span className="text-[9px] text-gray-400 mt-0.5">{badge.label} {doc.size ? `• ${formatFileSize(doc.size)}` : ''}</span>
+                              </div>
+                            )}
+
+                            {/* Hover Overlay with Preview & Download */}
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-between p-2">
+                              <span className="text-[9px] text-white font-semibold truncate w-full text-center px-1">
+                                {doc.name}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); setActivePreviewDoc(doc); }}
+                                  className="bg-white text-gray-800 rounded-full p-2 hover:bg-blue-50 shadow-md transition-transform hover:scale-110"
+                                  title="Preview"
+                                >
+                                  <Eye size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); downloadAttachment(doc); }}
+                                  className="bg-white text-blue-600 rounded-full p-2 hover:bg-blue-50 shadow-md transition-transform hover:scale-110"
+                                  title="Download"
+                                >
+                                  <Download size={14} />
+                                </button>
+                              </div>
+                              <span className="text-[8px] text-white/80 font-medium">
+                                {formatFileSize(doc.size)}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Client Verification Section - Inline in View Details */}
               {verificationData.length > 0 && (
@@ -3148,6 +3010,8 @@ export default function Bookings() {
           </div>
         </div>
       )}
+
+      <AttachmentPreviewModal doc={activePreviewDoc} onClose={() => setActivePreviewDoc(null)} />
 
       {/* Delete Confirmation Dialog */}
       {confirmDeleteId !== null && (

@@ -19,9 +19,10 @@ import {
 } from 'lucide-react';
 import { client } from '../lib/api';
 import logo from '../assets/logo.png';
+import loginHero from '../assets/login-hero.png';
 
 export default function Login() {
-  const { isAuthenticated, login } = useAuthStore();
+  const { isAuthenticated, login, loginRequest, loginVerifyOtp } = useAuthStore();
   const navigate = useNavigate();
 
   // Form states
@@ -31,6 +32,11 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loginStep, setLoginStep] = useState<'credentials' | 'otp'>('credentials');
+  const [loginOtp, setLoginOtp] = useState('');
+  const [loginOtpTimer, setLoginOtpTimer] = useState(0);
+  const [otpSentMsg, setOtpSentMsg] = useState('');
+  const [fallbackOtp, setFallbackOtp] = useState<string | null>(null);
 
   // Forgot Password modal states
   const [showForgot, setShowForgot] = useState(false);
@@ -67,7 +73,15 @@ export default function Login() {
     }
   }, [otpResendTimer]);
 
-  // Handle Standard Login
+  // Login 2FA OTP countdown timer
+  useEffect(() => {
+    if (loginOtpTimer > 0) {
+      const timer = setTimeout(() => setLoginOtpTimer(loginOtpTimer - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [loginOtpTimer]);
+
+  // Handle Step 1: Validate credentials & trigger Brevo OTP
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password.trim()) {
@@ -77,11 +91,43 @@ export default function Login() {
 
     setLoading(true);
     setError('');
+    setOtpSentMsg('');
 
     try {
-      const result: any = await login(email.trim(), password);
-      const isSuccess = typeof result === 'boolean' ? result : (result === true || result?.success === true);
-      if (isSuccess) {
+      const result = await loginRequest(email.trim(), password);
+      if (result.success && result.requiresOtp) {
+        setLoginStep('otp');
+        setLoginOtp('');
+        setLoginOtpTimer(60);
+        setOtpSentMsg(result.message || `A 6-digit verification code has been sent to ${email.trim()}`);
+        if (result.fallbackOtp) {
+          setFallbackOtp(result.fallbackOtp);
+        }
+      } else {
+        setError(result.message || 'Invalid email or password. Please verify your credentials.');
+      }
+    } catch (err: any) {
+      console.error('Login request error:', err);
+      setError('Connection error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Step 2: Verify Brevo OTP & Complete Login
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginOtp.trim() || loginOtp.trim().length < 6) {
+      setError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const result = await loginVerifyOtp(email.trim(), loginOtp.trim());
+      if (result.success) {
         if (rememberMe) {
           localStorage.setItem('gsf_remembered_email', email.trim());
         } else {
@@ -89,14 +135,34 @@ export default function Login() {
         }
         navigate('/dashboard', { replace: true });
       } else {
-        const errorMsg = (typeof result === 'object' && result?.message)
-          ? result.message
-          : 'Invalid email or password. If your account is inactive, please contact your administrator.';
-        setError(errorMsg);
+        setError(result.message || 'Invalid verification code. Please check your email and try again.');
       }
     } catch (err: any) {
-      console.error('Login error:', err);
-      setError('Connection error. Please try again.');
+      console.error('OTP verification error:', err);
+      setError('Verification error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend Login OTP
+  const handleResendLoginOtp = async () => {
+    if (loginOtpTimer > 0) return;
+    setLoading(true);
+    setError('');
+    try {
+      const result = await loginRequest(email.trim(), password);
+      if (result.success) {
+        setLoginOtpTimer(60);
+        setOtpSentMsg(result.message || 'A new verification code has been sent to your email.');
+        if (result.fallbackOtp) {
+          setFallbackOtp(result.fallbackOtp);
+        }
+      } else {
+        setError(result.message || 'Failed to resend verification code.');
+      }
+    } catch {
+      setError('Failed to resend verification code. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -293,6 +359,7 @@ export default function Login() {
             )}
 
             {/* Form */}
+            {loginStep === 'credentials' ? (
             <form onSubmit={handleSubmit} className="space-y-5">
               
               {/* Email Address */}
@@ -373,20 +440,112 @@ export default function Login() {
                   disabled={loading}
                   className="relative group w-full py-3.5 px-4 rounded-xl bg-purple-700 hover:bg-purple-800 active:scale-[0.99] text-white font-semibold text-sm shadow-md hover:shadow-lg hover:shadow-purple-700/25 transition-all duration-200 overflow-hidden disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {/* Subtle Rainbow Glow on Button Edge */}
                   <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-pink-500 via-amber-400 to-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity duration-300 pointer-events-none" />
 
                   {loading ? (
                     <span className="flex items-center justify-center gap-2">
                       <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Signing in...
+                      Validating & Sending OTP...
                     </span>
                   ) : (
-                    'Sign in'
+                    'Sign in with OTP'
                   )}
                 </button>
               </div>
             </form>
+          ) : (
+            /* Step 2: 6-Digit OTP Verification Form */
+            <form onSubmit={handleVerifyOtp} className="space-y-5 animate-fade-in">
+              {fallbackOtp && (
+                <div className="p-3.5 rounded-2xl bg-amber-50/90 border border-amber-300 text-amber-900 text-xs shadow-sm">
+                  <div className="font-bold flex items-center justify-between text-amber-900 mb-1">
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-amber-600" />
+                      Brevo IP Security Notice
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setLoginOtp(fallbackOtp)}
+                      className="px-2.5 py-1 rounded-md bg-purple-700 text-white font-semibold text-[11px] hover:bg-purple-800 transition-colors shadow-xs"
+                    >
+                      Auto-Fill Code
+                    </button>
+                  </div>
+                  <div className="text-gray-700 mt-1">
+                    Your Brevo account has <strong>Authorised IPs</strong> enabled which blocked email delivery to your inbox.
+                  </div>
+                  <div className="mt-2 p-2 bg-white/90 rounded-xl border border-amber-200 flex items-center justify-between">
+                    <span className="text-gray-500 text-[11px]">Your Verification Code:</span>
+                    <span className="font-mono font-extrabold text-xl text-purple-700 tracking-widest">{fallbackOtp}</span>
+                  </div>
+                  <div className="mt-2 text-[11px] text-amber-800">
+                    To receive emails directly in your inbox, disable "Authorised IPs" at <a href="https://app.brevo.com/security/authorised_ips" target="_blank" rel="noreferrer" className="underline font-bold text-purple-700">Brevo Security Settings</a>.
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-gray-800 mb-2">
+                  6-Digit Verification Code
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    maxLength={6}
+                    value={loginOtp}
+                    onChange={(e) => setLoginOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000"
+                    className="w-full px-4 py-4 rounded-xl border-2 border-purple-200 bg-white text-gray-900 text-center text-3xl font-mono font-bold tracking-[0.4em] placeholder:text-gray-300 focus:outline-none focus:ring-4 focus:ring-purple-600/20 focus:border-purple-600 transition-all duration-200 shadow-sm"
+                  />
+                </div>
+                <div className="flex items-center justify-between mt-3 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginStep('credentials');
+                      setError('');
+                      setOtpSentMsg('');
+                      setFallbackOtp(null);
+                    }}
+                    className="text-gray-500 hover:text-gray-800 font-semibold flex items-center gap-1 transition-colors"
+                  >
+                    <ArrowLeft size={13} /> Change email / password
+                  </button>
+                  {loginOtpTimer > 0 ? (
+                    <span className="text-gray-400">Resend in <strong className="text-purple-700">{loginOtpTimer}s</strong></span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleResendLoginOtp}
+                      disabled={loading}
+                      className="text-purple-600 hover:text-purple-800 font-bold hover:underline"
+                    >
+                      Resend OTP Code
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Verify & Enter CRM Button */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={loading || loginOtp.length < 6}
+                  className="relative group w-full py-3.5 px-4 rounded-xl bg-purple-700 hover:bg-purple-800 active:scale-[0.99] text-white font-semibold text-sm shadow-md hover:shadow-lg hover:shadow-purple-700/25 transition-all duration-200 overflow-hidden disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {loading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Verifying Code...
+                    </span>
+                  ) : (
+                    'Verify & Enter CRM'
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
           </div>
 
           {/* Bottom Security Footer */}
@@ -400,150 +559,74 @@ export default function Login() {
         </div>
 
 
-        {/* ================= RIGHT COLUMN: PURPLE ARTWORK WITH LIGHT RAINBOW ANIMATION ================= */}
-        <div className="w-full lg:w-1/2 bg-[#8b6fe3] p-8 sm:p-12 md:p-14 flex flex-col justify-between items-center relative overflow-hidden select-none">
+        {/* ================= RIGHT COLUMN: INTERACTIVE AGENT HERO SHOWCASE ================= */}
+        <div className="w-full lg:w-1/2 bg-gradient-to-br from-[#7e57c2] via-[#673ab7] to-[#4527a0] p-6 sm:p-10 md:p-12 flex flex-col justify-between items-center relative overflow-hidden select-none min-h-[580px]">
           
-          {/* Animated Rainbow Ambient Glow in the background */}
-          <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full rainbow-glow opacity-30 blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-24 -left-24 w-96 h-96 rounded-full rainbow-glow opacity-30 blur-3xl pointer-events-none" />
-          
-          {/* Subtle Background Pattern Doodles (matching the reference image style) */}
-          <div className="absolute inset-0 opacity-20 pointer-events-none">
-            {/* Top right floating badges */}
-            <div className="absolute top-10 right-14 text-white text-3xl animate-float-gentle" style={{ animationDelay: '0.5s' }}>✈️</div>
-            <div className="absolute top-20 right-32 text-white text-xl animate-float-gentle" style={{ animationDelay: '1.2s' }}>📞</div>
-            <div className="absolute top-12 left-16 text-white text-2xl animate-float-gentle" style={{ animationDelay: '0.8s' }}>🌐</div>
-            <div className="absolute top-24 left-36 text-white text-lg animate-float-gentle" style={{ animationDelay: '1.5s' }}>✉️</div>
-
-            {/* Line-art doodles */}
-            <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" strokeWidth="1.5">
-              {/* Globe circle with 24 */}
-              <circle cx="15%" cy="30%" r="32" stroke="white" strokeDasharray="3 3" />
-              <ellipse cx="15%" cy="30%" rx="16" ry="32" stroke="white" opacity="0.6" />
-              <line x1="8%" y1="30%" x2="22%" y2="30%" stroke="white" opacity="0.6" />
-              <text x="15%" y="32%" fill="white" fontSize="11" fontWeight="bold" textAnchor="middle">24</text>
-
-              {/* Envelope doodle */}
-              <rect x="18%" y="42%" width="38" height="26" rx="4" stroke="white" opacity="0.7" />
-              <path d="M 18% 42% L 23% 47% L 28% 42%" stroke="white" opacity="0.7" />
-
-              {/* Chat and thought bubbles */}
-              <circle cx="82%" cy="22%" r="22" stroke="white" opacity="0.5" />
-              <circle cx="78%" cy="22%" r="2" fill="white" />
-              <circle cx="82%" cy="22%" r="2" fill="white" />
-              <circle cx="86%" cy="22%" r="2" fill="white" />
-
-              {/* Floating waves and shapes */}
-              <path d="M 50 120 Q 80 100 110 120 T 170 120" stroke="white" opacity="0.4" />
-              <path d="M 280 80 Q 310 60 340 80 T 400 80" stroke="white" opacity="0.4" />
-            </svg>
-          </div>
+          {/* Animated Ambient Aura & Glow */}
+          <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-pink-500/25 blur-3xl animate-aura-pulse pointer-events-none" />
+          <div className="absolute -bottom-24 -left-24 w-96 h-96 rounded-full bg-indigo-500/25 blur-3xl animate-aura-pulse pointer-events-none" style={{ animationDelay: '2.5s' }} />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.12),transparent_70%)] pointer-events-none" />
 
           {/* Top Header Badge */}
           <div className="w-full flex items-center justify-between relative z-10">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-xs font-semibold shadow-sm">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              Get Set Flight · Official Portal
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/15 backdrop-blur-md border border-white/25 text-white text-xs font-semibold shadow-md">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]" />
+              Get Set Flight · Live Agent Desk
             </div>
-            <div className="text-white/80 text-xs font-medium tracking-wide">
-              v2.4 Enterprise
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 backdrop-blur-sm border border-white/15 text-white/90 text-xs font-medium tracking-wide">
+              <Sparkles size={12} className="text-amber-300" />
+              24/7 Ticketing
             </div>
           </div>
 
-          {/* Main Visual Illustration: Computer screen + Agent with headset making "OK" gesture */}
-          <div className="relative my-auto py-6 flex items-center justify-center w-full max-w-sm">
+          {/* Center Image Container with Smooth Animation & Interactive Floating Pills */}
+          <div className="relative my-auto py-4 flex items-center justify-center w-full max-w-md">
             
-            {/* Monitor / Screen Base */}
-            <div className="relative w-72 sm:w-80 h-72 sm:h-80 flex items-center justify-center animate-float-gentle">
-              
-              {/* Computer Monitor Outer Frame */}
-              <div className="absolute inset-x-4 bottom-8 top-10 bg-slate-900 rounded-3xl p-3 shadow-2xl border-4 border-slate-800 overflow-hidden flex flex-col justify-end">
-                {/* Screen background */}
-                <div className="w-full h-full bg-[#1e1b4b] rounded-2xl relative overflow-hidden flex items-end justify-center">
-                  
-                  {/* Subtle screen background grid / waves */}
-                  <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#a5b4fc_1px,transparent_1px)] [background-size:12px_12px]" />
+            {/* Glowing Backdrop Circle behind Hero Image */}
+            <div className="absolute w-72 sm:w-80 h-72 sm:h-80 rounded-full bg-gradient-to-tr from-purple-400/25 to-pink-400/20 blur-2xl pointer-events-none" />
 
-                  {/* Customer Service Representative (Illustrated SVG) */}
-                  <svg className="w-64 h-64 z-10" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    {/* Torso / Purple Outfit */}
-                    <path d="M 60 240 C 60 180 85 160 120 160 C 155 160 180 180 180 240 Z" fill="#5832a8" />
-                    
-                    {/* White Collar */}
-                    <path d="M 105 160 L 120 180 L 135 160 Z" fill="#ffffff" />
-                    
-                    {/* Neck */}
-                    <rect x="110" y="132" width="20" height="28" rx="6" fill="#fde047" opacity="0.9" />
+            {/* Main Hero Image */}
+            <div className="relative z-10 animate-hero-float flex items-center justify-center">
+              <img
+                src={loginHero}
+                alt="Get Set Flight Support Specialist"
+                loading="eager"
+                decoding="async"
+                className="w-full max-w-[340px] sm:max-w-[420px] h-auto object-contain drop-shadow-[0_24px_45px_rgba(0,0,0,0.38)] transition-transform duration-300 hover:scale-[1.02]"
+              />
 
-                    {/* Head / Face */}
-                    <circle cx="120" cy="110" r="32" fill="#fde047" opacity="0.95" />
-
-                    {/* Dark Styled Hair */}
-                    <path d="M 86 110 C 86 70 154 70 154 110 C 154 85 142 75 120 75 C 98 75 86 85 86 110 Z" fill="#0f172a" />
-                    <path d="M 88 100 C 88 125 102 140 102 140 C 96 128 94 115 94 100 Z" fill="#0f172a" />
-                    <path d="M 152 100 C 152 125 138 140 138 140 C 144 128 146 115 146 100 Z" fill="#0f172a" />
-
-                    {/* Headset & Microphone */}
-                    <path d="M 94 105 C 90 75 150 75 146 105" stroke="#334155" strokeWidth="5" strokeLinecap="round" />
-                    <circle cx="94" cy="108" r="8" fill="#1e293b" />
-                    <circle cx="146" cy="108" r="8" fill="#1e293b" />
-                    {/* Headset microphone curving towards mouth */}
-                    <path d="M 146 112 Q 146 132 126 132" stroke="#1e293b" strokeWidth="3" fill="none" strokeLinecap="round" />
-                    <circle cx="124" cy="132" r="4" fill="#0f172a" />
-
-                    {/* Hand doing "OK" Gesture (Sign of Excellence & Ease) */}
-                    <g transform="translate(62, 120)">
-                      {/* Wrist / Arm */}
-                      <path d="M 12 70 L 12 40 C 12 30 18 20 26 20 C 34 20 38 28 38 40 L 38 70 Z" fill="#ffffff" />
-                      {/* Finger circle (O shape) */}
-                      <circle cx="32" cy="24" r="9" stroke="#ffffff" strokeWidth="5" fill="#5832a8" />
-                      {/* Three extended upright fingers (K shape) */}
-                      <path d="M 22 22 L 20 6 C 20 3 24 3 24 6 L 26 20" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" />
-                      <path d="M 15 26 L 12 10 C 12 7 16 7 16 10 L 18 24" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" />
-                      <path d="M 8 32 L 4 16 C 4 13 8 13 8 16 L 11 30" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" />
-                    </g>
-                  </svg>
-                </div>
+              {/* Floating Live Status Pill: Top Left */}
+              <div className="absolute -top-2 -left-2 sm:left-0 bg-white/95 backdrop-blur-md rounded-2xl py-2 px-3.5 shadow-xl border border-purple-200/60 flex items-center gap-2.5 animate-badge-1 cursor-default hover:scale-105 transition-transform">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                <span className="text-xs font-bold text-gray-900 tracking-tight">Active Online</span>
+                <span className="text-[10px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded-full">Instant Sync</span>
               </div>
 
-              {/* Monitor Stand Base */}
-              <div className="absolute bottom-2 w-28 h-6 bg-slate-800 rounded-t-xl shadow-lg border-t border-slate-700" />
-              <div className="absolute bottom-0 w-36 h-2.5 bg-slate-700 rounded-full shadow-lg" />
-
-              {/* Floating Verified Badge (Checkmark in front, matching reference screenshot) */}
-              <div className="absolute left-0 bottom-24 bg-white/95 backdrop-blur-md rounded-2xl py-2 px-3.5 shadow-xl border border-purple-200/60 flex items-center gap-2 transform -rotate-3 hover:rotate-0 transition-transform cursor-pointer">
-                <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 font-extrabold text-sm shadow-inner">
-                  <Check size={16} strokeWidth={3} />
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-gray-900 leading-tight">Verified Live</span>
-                  <span className="text-[9px] text-gray-500 font-medium">99.98% Uptime</span>
-                </div>
-              </div>
-
-              {/* Floating Flight Ready Badge on right */}
-              <div className="absolute -right-3 top-20 bg-white/95 backdrop-blur-md rounded-2xl py-2 px-3 shadow-xl border border-purple-200/60 flex items-center gap-2 transform rotate-6 hover:rotate-0 transition-transform cursor-pointer">
-                <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-extrabold text-xs shadow-inner">
+              {/* Floating Live Call / Ticket Pill: Bottom Right */}
+              <div className="absolute -bottom-2 -right-2 sm:right-0 bg-slate-900/90 backdrop-blur-md rounded-2xl py-2.5 px-4 shadow-2xl border border-white/15 flex items-center gap-3 animate-badge-2 cursor-default hover:scale-105 transition-transform text-white">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-sm shadow-md">
                   ✈️
                 </div>
-                <div className="flex flex-col text-left">
-                  <span className="text-[11px] font-bold text-gray-900 leading-tight">Get Set Flight</span>
-                  <span className="text-[9px] text-purple-600 font-medium">Fast Ticketing</span>
+                <div className="text-left">
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    GSF Travel Desk
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  </div>
+                  <div className="text-[10px] text-gray-300 font-medium">99.98% SLA Speed</div>
                 </div>
               </div>
-
             </div>
 
           </div>
 
           {/* Bottom Card Footer Banner */}
-          <div className="w-full bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 text-white text-center shadow-lg relative z-10">
+          <div className="w-full bg-white/10 backdrop-blur-md rounded-2xl py-3.5 px-4 border border-white/20 text-white text-center shadow-lg relative z-10">
             <p className="text-sm font-semibold tracking-wide flex items-center justify-center gap-2">
-              <Sparkles className="w-4 h-4 text-yellow-300" />
-              Seamless Flights, Uncompromised Security
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              High-Velocity Bookings · Seamless Ticketing
             </p>
-            <p className="text-xs text-white/75 mt-0.5 font-normal">
-              Empowering top travel professionals worldwide.
+            <p className="text-xs text-white/80 mt-0.5 font-normal">
+              Empowering flight agents and supervisors with unified live workflows.
             </p>
           </div>
 

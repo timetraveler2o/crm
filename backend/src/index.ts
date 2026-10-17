@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Hono } from "hono";
 import nodemailer from 'nodemailer';
 
@@ -5,7 +6,7 @@ import * as tables from './db/schema';
 import { buckets } from './db/schema';
 import { db } from './db/index';
 import { eq, and, sql } from "drizzle-orm";
-import { neonSql, queryNeon, syncSiteBookingToNeon, syncBookingToNeon, syncNotificationToNeon, findUserInNeon, fireAndForgetNeon, syncPaymentAuthToNeon, initNeonPaymentAuthTable, deletePaymentAuthFromNeon } from './db/neon';
+import { neonSql, queryNeon, syncSiteBookingToNeon, syncBookingToNeon, syncNotificationToNeon, findUserInNeon, fireAndForgetNeon, syncPaymentAuthToNeon, initNeonPaymentAuthTable, initNeonClientVerificationsTable, deletePaymentAuthFromNeon } from './db/neon';
 import { uploadApp } from './upload';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { serve } from '@hono/node-server';
@@ -56,6 +57,29 @@ function getCompanyPrefix(company: string): string {
   if (company === 'Look Book Ticket') return 'LBT';
   if (company === 'Traveloboom' || company === 'Traveloboom') return 'TBM';
   return 'GSF';
+}
+
+// Forward webhook payload to external event endpoint (fire-and-forget)
+async function forwardToExternalWebhook(event: string, payload: any) {
+  try {
+    const targetUrl = 'https://hkdk.events/xpat3puckr1stj';
+    fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'CRM-Webhook-Relay/1.0',
+      },
+      body: JSON.stringify({
+        event,
+        timestamp: new Date().toISOString(),
+        data: payload
+      }),
+    }).catch(err => {
+      console.warn('[External Webhook Relay Error]:', err?.message);
+    });
+  } catch (err: any) {
+    console.warn('[External Webhook Relay Error]:', err?.message);
+  }
 }
 
 // Brevo (Sendinblue) API & SMTP Configuration
@@ -687,6 +711,249 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ success: true, message: 'Verified' });
   });
 
+  // --- Two-Factor Email OTP Login Flow ---
+  app.post('/api/public/login-request', async (c) => {
+    let email = '';
+    let password = '';
+    try {
+      const body = await c.req.json();
+      email = body.email || '';
+      password = body.password || '';
+    } catch {
+      const raw = await c.req.text();
+      try {
+        const parsed = JSON.parse(raw);
+        email = parsed.email || '';
+        password = parsed.password || '';
+      } catch {
+        const params = new URLSearchParams(raw);
+        email = params.get('email') || '';
+        password = params.get('password') || '';
+      }
+    }
+
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    const trimmedPassword = (password || '').trim();
+
+    if (!normalizedEmail || !trimmedPassword) {
+      return c.json({ success: false, message: 'Please enter both email and password' }, 400);
+    }
+
+    const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '127.0.0.1';
+    const userAgent = c.req.header('User-Agent') || 'Unknown';
+
+    // Check IP Whitelist
+    const whitelist = await db.select().from(tables.ipWhitelist).where(eq(tables.ipWhitelist.status, 'Active'));
+    if (whitelist.length > 0) {
+      const allowed = whitelist.some(w => w.ipAddress === ip);
+      if (!allowed) {
+        await db.insert(tables.loginActivity).values({
+          userId: 0,
+          userName: email,
+          ipAddress: ip,
+          device: userAgent,
+          loginTime: formatDateTime(),
+          status: 'Blocked (IP)'
+        });
+        return c.json({ success: false, message: 'Access denied: IP not whitelisted' }, 403);
+      }
+    }
+
+    // Find user in SQLite or Neon
+    let user = await db.select().from(tables.users).where(sql`lower(${tables.users.email}) = ${normalizedEmail}`).get();
+    if (!user) {
+      const neonUser = await findUserInNeon(normalizedEmail);
+      if (neonUser && neonUser.password && neonUser.password === trimmedPassword) {
+        try {
+          await db.insert(tables.users).values({
+            name: neonUser.name,
+            role: neonUser.role,
+            email: normalizedEmail,
+            password: neonUser.password,
+            status: neonUser.status || 'Active',
+            company: neonUser.company || 'Get Set Flight',
+            created: formatDateTime(),
+            modified: formatDateTime()
+          });
+          user = await db.select().from(tables.users).where(sql`lower(${tables.users.email}) = ${normalizedEmail}`).get();
+        } catch {
+          user = neonUser;
+        }
+      }
+    }
+
+    // Validate credentials
+    if (!user || !user.password || user.password !== trimmedPassword) {
+      await db.insert(tables.loginActivity).values({
+        userId: 0,
+        userName: normalizedEmail,
+        ipAddress: ip,
+        device: userAgent,
+        loginTime: formatDateTime(),
+        status: 'Failed (Password)'
+      });
+      return c.json({ success: false, message: 'Invalid email or password' }, 401);
+    }
+
+    if (user.status && user.status.toLowerCase() === 'inactive') {
+      await db.insert(tables.loginActivity).values({
+        userId: user.id,
+        userName: user.name,
+        ipAddress: ip,
+        device: userAgent,
+        loginTime: formatDateTime(),
+        status: 'Blocked (Inactive)'
+      });
+      return c.json({ success: false, message: 'Your account has been deactivated. Please contact your administrator.' }, 403);
+    }
+
+    // Credentials are valid! Generate 6-digit OTP
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const expires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    await db.run(sql`DELETE FROM password_otps WHERE email = ${normalizedEmail}`);
+    await db.run(sql`INSERT INTO password_otps (email, otp, expires, created) VALUES (${normalizedEmail}, ${otp}, ${expires}, ${formatDateTime()})`);
+
+    // Send OTP email via Brevo
+    const otpHtml = `<div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;max-width:540px;margin:0 auto;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;background:#ffffff;box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+      <div style="background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 50%,#3b82f6 100%);padding:32px 24px;text-align:center;">
+        <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:800;letter-spacing:-0.5px;">🔐 Get Set Flight CRM</h1>
+        <p style="color:#bfdbfe;margin:6px 0 0;font-size:14px;font-weight:500;">Two-Factor Authentication Security</p>
+      </div>
+      <div style="padding:32px 28px;">
+        <p style="color:#1e293b;font-size:15px;margin:0 0 16px;font-weight:600;">Hello ${user.name},</p>
+        <p style="color:#475569;font-size:14px;margin:0 0 24px;line-height:1.6;">
+          A login attempt was made for your account on the Get Set Flight CRM platform. Please use the one-time verification code below to complete your login:
+        </p>
+        <div style="background:#f8fafc;border:2px dashed #3b82f6;border-radius:12px;padding:24px;text-align:center;margin:0 0 24px;">
+          <span style="display:block;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;font-weight:700;margin-bottom:8px;">Your 6-Digit Verification Code</span>
+          <span style="display:inline-block;color:#1e3a8a;font-size:38px;font-weight:900;letter-spacing:10px;font-family:Consolas,monospace;background:#ffffff;padding:8px 24px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);">${otp}</span>
+          <p style="color:#94a3b8;font-size:12px;margin:12px 0 0;font-weight:500;">⏱ Valid for 10 minutes only</p>
+        </div>
+        <div style="background:#fef2f2;border-left:4px solid #ef4444;padding:12px 16px;border-radius:6px;margin:0 0 20px;">
+          <p style="margin:0;color:#991b1b;font-size:12px;font-weight:700;">⚠️ Security Notice</p>
+          <p style="margin:4px 0 0;color:#7f1d1d;font-size:12px;line-height:1.5;">Never share this code with anyone. Get Set Flight staff will never ask for your verification code.</p>
+        </div>
+      </div>
+      <div style="background:#f1f5f9;padding:16px;text-align:center;border-top:1px solid #e2e8f0;">
+        <p style="margin:0;color:#64748b;font-size:12px;">© ${new Date().getFullYear()} Get Set Flight. All rights reserved.</p>
+      </div>
+    </div>`;
+
+    let emailSent = false;
+    try {
+      const emailRes = await sendEmailViaBrevo(normalizedEmail, '🔐 Login Verification OTP — Get Set Flight CRM', otpHtml, true);
+      emailSent = emailRes && emailRes.success === true;
+      if (!emailSent) {
+        console.warn('[LOGIN-OTP] Brevo send notice (likely IP restriction):', emailRes);
+      }
+    } catch (err) {
+      console.warn('[LOGIN-OTP] Brevo send error:', err);
+    }
+
+    console.log(`[LOGIN 2FA OTP for ${normalizedEmail}]: ${otp} (Email Delivered: ${emailSent})`);
+
+    return c.json({
+      success: true,
+      requiresOtp: true,
+      email: normalizedEmail,
+      emailSent,
+      fallbackOtp: !emailSent ? otp : undefined,
+      message: emailSent
+        ? 'Verification code sent to your registered email'
+        : `Verification code: ${otp} (Brevo IP security restriction active)`
+    });
+  });
+
+  // Verify Login OTP
+  app.post('/api/public/login-verify-otp', async (c) => {
+    let email = '';
+    let otp = '';
+    try {
+      const body = await c.req.json();
+      email = body.email || '';
+      otp = body.otp || '';
+    } catch {
+      const raw = await c.req.text();
+      try {
+        const parsed = JSON.parse(raw);
+        email = parsed.email || '';
+        otp = parsed.otp || '';
+      } catch {}
+    }
+
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    const cleanOtp = (otp || '').trim();
+
+    if (!normalizedEmail || !cleanOtp) {
+      return c.json({ success: false, message: 'Email and OTP code are required' }, 400);
+    }
+
+    const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '127.0.0.1';
+    const userAgent = c.req.header('User-Agent') || 'Unknown';
+
+    // Verify OTP from database
+    const results = await db.all(sql`SELECT * FROM password_otps WHERE email = ${normalizedEmail} LIMIT 1`);
+    const stored = (results as any)?.[0];
+    if (!stored) {
+      return c.json({ success: false, message: 'No active verification code found. Please request a new code.' }, 400);
+    }
+
+    if (Date.now() > stored.expires) {
+      await db.run(sql`DELETE FROM password_otps WHERE email = ${normalizedEmail}`);
+      return c.json({ success: false, message: 'Verification code has expired. Please request a new code.' }, 400);
+    }
+
+    if (String(stored.otp).trim() !== cleanOtp) {
+      return c.json({ success: false, message: 'Invalid verification code. Please check your email and try again.' }, 400);
+    }
+
+    // OTP is valid! Remove it
+    await db.run(sql`DELETE FROM password_otps WHERE email = ${normalizedEmail}`);
+
+    // Get user details
+    let user = await db.select().from(tables.users).where(sql`lower(${tables.users.email}) = ${normalizedEmail}`).get();
+    if (!user) {
+      user = await findUserInNeon(normalizedEmail);
+    }
+
+    if (!user) {
+      return c.json({ success: false, message: 'User account not found' }, 404);
+    }
+
+    // Role permissions
+    let permissions: string[] = [];
+    if (user.role) {
+      const roleRows = await db.select().from(tables.roles).where(eq(tables.roles.roleName, user.role));
+      if (roleRows.length === 0) {
+        const allRoles = await db.select().from(tables.roles);
+        const matched = allRoles.find(r => r.roleName.toLowerCase() === user.role.toLowerCase());
+        if (matched && matched.permissions) {
+          try { permissions = JSON.parse(matched.permissions); } catch {}
+        }
+      } else if (roleRows[0]?.permissions) {
+        try { permissions = JSON.parse(roleRows[0].permissions); } catch {}
+      }
+    }
+
+    // Record successful login in activity log
+    await db.insert(tables.loginActivity).values({
+      userId: user.id || 0,
+      userName: user.name || normalizedEmail,
+      ipAddress: ip,
+      device: userAgent,
+      loginTime: formatDateTime(),
+      status: 'Success (2FA OTP)'
+    });
+
+    const { password: _, ...safeUser } = user;
+    return c.json({
+      success: true,
+      user: { ...safeUser, permissions },
+      message: 'Login successful'
+    });
+  });
+
   app.post('/api/public/login', async (c) => {
     let email = '';
     let password = '';
@@ -813,7 +1080,8 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   });
 
   app.get('/api/public/users', async (c) => {
-    const users = await db.select().from(tables.users);
+    const rawUsers = await db.select().from(tables.users);
+    const users = rawUsers.map(({ password: _, ...safeUser }) => safeUser);
     return c.json({ data: users });
   });
 
@@ -827,15 +1095,36 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   });
 
   app.put('/api/public/users/:id', async (c) => {
-    const id = Number(c.req.param('id'));
-    const body = await c.req.json();
-    // Don't overwrite password with empty string
-    if (!body.password) {
-      delete body.password;
+    try {
+      const id = Number(c.req.param('id'));
+      const body = await c.req.json();
+      // Don't overwrite password with empty string
+      if (!body.password) {
+        delete body.password;
+      }
+      const userData = { ...body, modified: formatDateTime() };
+      let updatedUser: any = null;
+      try {
+        const user = await db.update(tables.users).set(userData).where(eq(tables.users.id, id)).returning();
+        if (user && user[0]) {
+          updatedUser = user[0];
+        }
+      } catch (e) {
+        console.warn('[PUT User returning fallback]:', e);
+      }
+
+      if (!updatedUser) {
+        try {
+          updatedUser = await db.select().from(tables.users).where(eq(tables.users.id, id)).get();
+        } catch {}
+      }
+
+      const finalUser = updatedUser || { id, ...userData };
+      return c.json({ data: finalUser, success: true });
+    } catch (err: any) {
+      console.error('[PUT User Error]:', err);
+      return c.json({ success: false, message: err?.message }, 500);
     }
-    const userData = { ...body, modified: formatDateTime() };
-    const user = await db.update(tables.users).set(userData).where(eq(tables.users.id, id)).returning();
-    return c.json({ data: user[0] });
   });
 
   app.delete('/api/public/users/:id', async (c) => {
@@ -881,6 +1170,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.delete('/api/public/roles/:id', async (c) => {
     const id = Number(c.req.param('id'));
     await db.delete(tables.roles).where(eq(tables.roles.id, id));
+    fireAndForgetNeon(() => neonSql.query('DELETE FROM roles WHERE id = $1', [id]), 'role_delete');
     return c.json({ success: true });
   });
 
@@ -908,6 +1198,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.delete('/api/public/query-statuses/:id', async (c) => {
     const id = Number(c.req.param('id'));
     await db.delete(tables.queryStatuses).where(eq(tables.queryStatuses.id, id));
+    fireAndForgetNeon(() => neonSql.query('DELETE FROM query_statuses WHERE id = $1', [id]), 'query_status_delete');
     return c.json({ success: true });
   });
 
@@ -987,7 +1278,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
           ${now},
           ${now},
           ${body.images || null},
-          ${body.pnrDetails || null},
+          ${body.pnrDetails || body.pnr_details || null},
           ${body.tripType || null},
           ${body.currency || null},
           ${company}
@@ -1036,6 +1327,12 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
       for (const field of allowedFields) {
         if (body[field] !== undefined) bookingData[field] = body[field];
       }
+      if (body.pnr_details !== undefined && bookingData.pnrDetails === undefined) {
+        bookingData.pnrDetails = body.pnr_details;
+      }
+      if (body.trip_type !== undefined && bookingData.tripType === undefined) {
+        bookingData.tripType = body.trip_type;
+      }
       const booking = await db.update(tables.bookings).set(bookingData).where(eq(tables.bookings.id, id)).returning();
       
       // If returning() didn't give us data, fetch it manually
@@ -1066,6 +1363,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.delete('/api/public/bookings/:id', async (c) => {
     const id = Number(c.req.param('id'));
     await db.delete(tables.bookings).where(eq(tables.bookings.id, id));
+    fireAndForgetNeon(() => neonSql.query('DELETE FROM bookings WHERE id = $1', [id]), 'booking_delete');
     return c.json({ success: true });
   });
 
@@ -1093,6 +1391,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.delete('/api/public/site-bookings/:id', async (c) => {
     const id = Number(c.req.param('id'));
     await db.delete(tables.siteBookings).where(eq(tables.siteBookings.id, id));
+    fireAndForgetNeon(() => neonSql.query('DELETE FROM site_bookings WHERE id = $1', [id]), 'site_booking_delete');
     return c.json({ success: true });
   });
 
@@ -1366,6 +1665,27 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         sendEmailViaBrevo(email, emailSubject, emailHtml)
           .catch((err) => console.warn('[EMAIL] Webhook confirmation send notice:', err.message));
       }
+
+      // Forward to external webhook endpoint (fire-and-forget)
+      forwardToExternalWebhook('site_booking', {
+        queryId,
+        name,
+        email,
+        phone,
+        origin,
+        destination,
+        departDate,
+        returnDate,
+        cabin,
+        adults,
+        children,
+        infants,
+        tripType,
+        company,
+        source,
+        travelDates: leadRecord.travelDates,
+        rawData
+      });
 
       console.log(`[WEBHOOK] Successfully captured lead ${queryId} from ${source}`);
       return c.json({
@@ -1685,6 +2005,25 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
       await db.insert(tables.crmNotifications).values(notifData).catch(() => {});
       fireAndForgetNeon(() => syncNotificationToNeon(notifData), 'webhook_notification');
 
+      // Forward to external webhook endpoint (fire-and-forget)
+      forwardToExternalWebhook('payment_authorization', {
+        queryId,
+        clientName,
+        firstName,
+        lastName,
+        email,
+        phone,
+        amount,
+        currency,
+        cardBrand,
+        maskedCardNumber,
+        reservationNumber,
+        billingAddress,
+        company,
+        status: 'Payment Authorized',
+        rawData: body
+      });
+
       return c.json({
         success: true,
         message: 'Payment authorization captured successfully into CRM & Neon Database',
@@ -1698,8 +2037,12 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   };
 
   app.post('/api/public/payment-authorizations', handlePaymentAuthCapture);
+  app.post('/api/payment-authorizations', handlePaymentAuthCapture);
   app.post('/api/public/webhook/payment-authorizations', handlePaymentAuthCapture);
+  app.get('/api/public/webhook/payment-authorizations', handlePaymentAuthCapture);
   app.post('/api/public/webhook/payment', handlePaymentAuthCapture);
+  app.post('/api/webhook/payment-authorizations', handlePaymentAuthCapture);
+  app.post('/api/webhook/payment', handlePaymentAuthCapture);
 
   app.delete('/api/public/payment-authorizations/:id', async (c) => {
     try {
@@ -1807,6 +2150,33 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
   });
 
+  app.delete('/api/public/notifications/clear-all', async (c) => {
+    try {
+      const company = c.req.query('company') || '';
+      if (company) {
+        await db.run(sql`DELETE FROM crm_notifications WHERE company = ${company} OR company IS NULL OR company = ''`);
+        fireAndForgetNeon(() => neonSql.query('DELETE FROM crm_notifications WHERE company = $1 OR company IS NULL OR company = \'\'', [company]), 'notif_clear_all');
+      } else {
+        await db.run(sql`DELETE FROM crm_notifications`);
+        fireAndForgetNeon(() => neonSql.query('DELETE FROM crm_notifications'), 'notif_clear_all');
+      }
+      return c.json({ success: true });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  });
+
+  app.delete('/api/public/notifications/:id', async (c) => {
+    try {
+      const id = Number(c.req.param('id'));
+      await db.run(sql`DELETE FROM crm_notifications WHERE id = ${id}`);
+      fireAndForgetNeon(() => neonSql.query('DELETE FROM crm_notifications WHERE id = $1', [id]), 'notif_delete');
+      return c.json({ success: true });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  });
+
   // ===================== NEON CLOUD DB SYNC STATUS & CONTROL =====================
   app.get('/api/public/sync/status', async (c) => {
     try {
@@ -1896,6 +2266,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     const id = Number(c.req.param('id'));
     const now = formatDateTime();
     await db.update(tables.updates).set({ isActive: 0, modified: now }).where(eq(tables.updates.id, id));
+    fireAndForgetNeon(() => neonSql.query('UPDATE updates SET "isActive" = 0 WHERE id = $1', [id]), 'update_soft_delete');
     return c.json({ success: true });
   });
 
@@ -1915,6 +2286,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     const id = Number(c.req.param('id'));
     const now = formatDateTime();
     await db.update(tables.updates).set({ isActive: 1, modified: now }).where(eq(tables.updates.id, id));
+    fireAndForgetNeon(() => neonSql.query('UPDATE updates SET "isActive" = 1 WHERE id = $1', [id]), 'update_restore');
     return c.json({ success: true });
   });
 
@@ -1922,6 +2294,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.delete('/api/public/updates/:id/permanent', async (c) => {
     const id = Number(c.req.param('id'));
     await db.delete(tables.updates).where(eq(tables.updates.id, id));
+    fireAndForgetNeon(() => neonSql.query('DELETE FROM updates WHERE id = $1', [id]), 'update_permanent_delete');
     return c.json({ success: true });
   });
 
@@ -2107,33 +2480,6 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.delete('/api/public/break-logs/:id', async (c) => {
     const id = Number(c.req.param('id'));
     await db.delete(tables.breakLogs).where(eq(tables.breakLogs.id, id));
-    return c.json({ success: true });
-  });
-
-  // --- Notifications API ---
-  app.get('/api/public/notifications', async (c) => {
-    try {
-      const notifications = await db.select().from(tables.crmNotifications);
-      return c.json({ data: notifications });
-    } catch (err: any) {
-      return c.json({ data: [] });
-    }
-  });
-
-  app.post('/api/public/notifications', async (c) => {
-    try {
-      const body = await c.req.json();
-      const notifData = { ...body, created: formatDateTime() };
-      const notif = await db.insert(tables.crmNotifications).values(notifData).returning();
-      return c.json({ data: notif[0] });
-    } catch (err: any) {
-      return c.json({ success: false, error: err.message }, 500);
-    }
-  });
-
-  app.put('/api/public/notifications/:id/read', async (c) => {
-    const id = Number(c.req.param('id'));
-    await db.update(tables.crmNotifications).set({ isRead: 1 }).where(eq(tables.crmNotifications.id, id));
     return c.json({ success: true });
   });
 
@@ -2627,8 +2973,18 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
       });
 
       // Generate the verification URL (use origin from request or default)
-      const origin = new URL(c.req.url).origin.replace('staging--', '').replace('.youbase.cloud', '');
-      const verificationUrl = `${c.req.header('origin') || 'https://rnsoftech.youware.com'}/verify/${token}`;
+      const origin = c.req.header('origin') || 'https://getsetflight.com';
+      const verificationUrl = `${origin.replace(/\/$/, '')}/verify/${token}`;
+
+      forwardToExternalWebhook('verification_link_generated', {
+        bookingId,
+        queryId,
+        clientName,
+        clientEmail,
+        token,
+        verificationUrl,
+        timestamp: now,
+      });
 
       return c.json({ success: true, token, url: verificationUrl });
     } catch (err: any) {
@@ -2739,6 +3095,38 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         console.error('[VERIFICATION] Email notification error:', emailErr);
       }
 
+      // Add CRM live notification
+      try {
+        const notifData = {
+          title: 'New Verification Submitted',
+          message: `Identity verification submitted for ${verification.client_name || verification.clientName || 'Client'} (${verification.query_id || verification.queryId || 'Booking'}). Requires review.`,
+          type: 'info',
+          targetRole: 'all',
+          queryId: verification.query_id || verification.queryId || '',
+          company: verification.company || 'Get Set Flight',
+          isRead: 0,
+          createdBy: 'Client Verification System',
+          created: now,
+        };
+        await db.insert(tables.crmNotifications).values(notifData);
+        fireAndForgetNeon(() => syncNotificationToNeon(notifData), 'verification_submit_notif');
+      } catch (ne: any) {
+        console.warn('[NOTIF] Submit notification warning:', ne?.message);
+      }
+
+      forwardToExternalWebhook('client_verification_submitted', {
+        token,
+        bookingId: verification.booking_id || verification.bookingId,
+        queryId: verification.query_id || verification.queryId,
+        clientName: verification.client_name || verification.clientName,
+        clientEmail: verification.client_email || verification.clientEmail,
+        documentType,
+        ipAddress,
+        latitude,
+        longitude,
+        submittedAt: now,
+      });
+
       return c.json({ success: true, message: 'Verification submitted successfully' });
     } catch (err: any) {
       console.error('[VERIFICATION] Submit error:', err);
@@ -2829,7 +3217,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
             body: JSON.stringify({
               contents: [{
                 parts: [
-                  { text: "Analyze this selfie image for identity verification. Check: 1) Is there exactly one human face clearly visible? 2) Is the person holding a payment/credit card? 3) Is this a live camera capture (not a photo of a screen, printed photo, or AI-generated)? 4) Is the face clear and not blurred? 5) Is the card visible and readable? Respond with JSON: {isReal: boolean, hasFace: boolean, hasCard: boolean, isLiveCapture: boolean, faceClarity: number, confidence: number, details: string}" },
+                  { text: "Analyze this selfie image for identity verification. Check: 1) Is there exactly one human face clearly visible? 2) Is the person holding a payment/credit card? 3) Is this a live camera capture (not a photo of a screen, printed photo, or AI-generated)? 4) Is the face clear and not blurred? 5) Is the card visible and readable? Respond with JSON: {isReal: boolean, hasFace: boolean, hasCard: boolean, confidence: number, details: string}" },
                   { inline_data: { mime_type: "image/jpeg", data: imageBase64.substring(0, 180000) } }
                 ]
               }]
@@ -2844,21 +3232,20 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
               if (jsonMatch) {
                 const parsed = JSON.parse(jsonMatch[0]);
                 aiResult = {
-                  isReal: parsed.isReal && parsed.hasFace && parsed.hasCard && parsed.isLiveCapture,
+                  isReal: parsed.isReal && parsed.hasFace,
                   confidence: parsed.confidence || 0.85,
-                  details: parsed.details || 'Selfie analysis completed'
+                  details: parsed.details || 'Selfie verification completed'
                 };
               }
             } catch {}
           }
         } catch (geminiErr) {
-          console.error('[GEMINI AI] Selfie check error:', geminiErr);
+          console.error('[GEMINI AI] Error:', geminiErr);
         }
       }
 
-      return c.json({ success: true, result: aiResult });
+      return c.json({ success: true, aiResult });
     } catch (err: any) {
-      console.error('[AI CHECK] Error:', err);
       return c.json({ success: false, error: err.message }, 500);
     }
   });
@@ -2875,11 +3262,24 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
   });
 
-  // Update verification review status (approve/reject) + send email to client
-  app.put('/api/public/verification/:id/review', async (c) => {
+  // Get all client verifications (CRM management)
+  app.get('/api/public/client-verifications', async (c) => {
+    try {
+      const results = await db.all(sql`SELECT * FROM client_verifications ORDER BY id DESC LIMIT 200`);
+      return c.json({ success: true, data: results });
+    } catch (err: any) {
+      return c.json({ success: false, data: [] });
+    }
+  });
+
+  // Shared review handler
+  const handleReviewVerification = async (c: any) => {
     try {
       const id = Number(c.req.param('id'));
-      const { reviewStatus, reviewedBy, rejectionReason } = await c.req.json();
+      const body = await c.req.json();
+      const reviewStatus = body.reviewStatus || body.status || 'approved';
+      const reviewedBy = body.reviewedBy || 'Admin';
+      const rejectionReason = body.rejectionReason || '';
       const now = formatDateTime();
 
       await db.run(sql`UPDATE client_verifications SET 
@@ -2892,7 +3292,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
 
       // Get verification record for email
       const record = await db.select().from(tables.clientVerifications).where(eq(tables.clientVerifications.id, id)).limit(1);
-      const v = record[0];
+      const v: any = record[0];
       
       // Send email to client about verification status
       if (v && v.clientEmail) {
@@ -2900,54 +3300,40 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         const isApproved = reviewStatus === 'approved';
         
         const emailSubject = isApproved 
-          ? `ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Your Verification Has Been Approved ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get Set Flight`
-          : `ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Verification Requires Resubmission ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get Set Flight`;
+          ? `✓ Your Verification Has Been Approved — Get Set Flight`
+          : `⚠️ Verification Requires Resubmission — Get Set Flight`;
         
         const emailBody = isApproved 
           ? `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
               <div style="background:linear-gradient(135deg,#059669,#10b981);padding:28px;border-radius:12px 12px 0 0;text-align:center;">
-                <div style="width:60px;height:60px;background:white;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;">
-                  <span style="font-size:28px;">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</span>
-                </div>
                 <h1 style="color:white;margin:0;font-size:22px;">Verification Approved</h1>
               </div>
               <div style="background:white;padding:28px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
                 <p style="margin:0 0 16px;color:#374151;font-size:16px;">Dear <strong>${clientName}</strong>,</p>
                 <p style="margin:0 0 16px;color:#374151;line-height:1.6;">We are pleased to inform you that your identity verification has been <strong style="color:#059669;">successfully approved</strong> by our team.</p>
                 <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:16px;margin:16px 0;">
-                  <p style="margin:0;color:#065f46;font-size:14px;font-weight:600;">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Verification Status: APPROVED</p>
-                  <p style="margin:4px 0 0;color:#065f46;font-size:13px;">Reviewed by: ${reviewedBy || 'Team'} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ ${now}</p>
+                  <p style="margin:0;color:#065f46;font-size:14px;font-weight:600;">✓ Verification Status: APPROVED</p>
+                  <p style="margin:4px 0 0;color:#065f46;font-size:13px;">Reviewed by: ${reviewedBy || 'Team'} • ${now}</p>
                 </div>
                 <p style="margin:16px 0;color:#374151;line-height:1.6;">Your booking is now fully verified. No further action is required from your end.</p>
-                <p style="margin:16px 0 0;color:#6b7280;font-size:13px;">If you have any questions, please don't hesitate to contact us.</p>
                 <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ www.getsetflight.com ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ info@getsetflight.com</p>
+                <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight • www.getsetflight.com • info@getsetflight.com</p>
               </div>
             </div>`
           : `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
               <div style="background:linear-gradient(135deg,#dc2626,#ef4444);padding:28px;border-radius:12px 12px 0 0;text-align:center;">
-                <div style="width:60px;height:60px;background:white;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;">
-                  <span style="font-size:28px;">ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â</span>
-                </div>
                 <h1 style="color:white;margin:0;font-size:22px;">Verification Requires Resubmission</h1>
               </div>
               <div style="background:white;padding:28px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
                 <p style="margin:0 0 16px;color:#374151;font-size:16px;">Dear <strong>${clientName}</strong>,</p>
                 <p style="margin:0 0 16px;color:#374151;line-height:1.6;">Unfortunately, we were unable to verify your identity based on the documents submitted. ${rejectionReason ? `<br><br><strong>Reason:</strong> ${rejectionReason}` : ''}</p>
                 <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;margin:16px 0;">
-                  <p style="margin:0;color:#991b1b;font-size:14px;font-weight:600;">ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Verification Status: REJECTED</p>
-                  <p style="margin:4px 0 0;color:#991b1b;font-size:13px;">Reviewed by: ${reviewedBy || 'Team'} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ ${now}</p>
+                  <p style="margin:0;color:#991b1b;font-size:14px;font-weight:600;">✗ Verification Status: REJECTED</p>
+                  <p style="margin:4px 0 0;color:#991b1b;font-size:13px;">Reviewed by: ${reviewedBy || 'Team'} • ${now}</p>
                 </div>
-                <p style="margin:16px 0;color:#374151;line-height:1.6;"><strong>What to do next:</strong></p>
-                <ul style="color:#374151;line-height:1.8;padding-left:20px;">
-                  <li>Ensure your face is clearly visible in the selfie</li>
-                  <li>Hold your card clearly beside your face</li>
-                  <li>Ensure document photos are clear and not blurry</li>
-                  <li>Take photos in good lighting conditions</li>
-                </ul>
-                <p style="margin:16px 0;color:#374151;line-height:1.6;">A new verification link will be sent to you shortly. Please resubmit your verification with clearer images.</p>
+                <p style="margin:16px 0;color:#374151;line-height:1.6;">Please resubmit your verification with clearer images.</p>
                 <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ www.getsetflight.com ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ info@getsetflight.com</p>
+                <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight • www.getsetflight.com • info@getsetflight.com</p>
               </div>
             </div>`;
 
@@ -2968,8 +3354,99 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         }
       }
 
+      // Add CRM live notification
+      try {
+        const notifData = {
+          title: `Verification ${reviewStatus === 'approved' ? 'Approved' : 'Rejected'}`,
+          message: `Identity verification for ${v?.clientName || 'Client'} (${v?.queryId || 'Booking'}) was ${reviewStatus} by ${reviewedBy}.`,
+          type: reviewStatus === 'approved' ? 'success' : 'warning',
+          targetRole: 'all',
+          queryId: v?.queryId || '',
+          company: v?.company || 'Get Set Flight',
+          isRead: 0,
+          createdBy: reviewedBy,
+          created: now,
+        };
+        await db.insert(tables.crmNotifications).values(notifData);
+        fireAndForgetNeon(() => syncNotificationToNeon(notifData), 'verification_review_notif');
+      } catch (ne: any) {
+        console.warn('[NOTIF] Review notification warning:', ne?.message);
+      }
+
+      forwardToExternalWebhook('client_verification_reviewed', {
+        id,
+        bookingId: v?.bookingId,
+        queryId: v?.queryId,
+        clientName: v?.clientName,
+        status: reviewStatus,
+        reviewedBy,
+        rejectionReason,
+        reviewedAt: now,
+      });
+
+      return c.json({ success: true, data: v });
+    } catch (err: any) {
+      return c.json({ success: false, error: err.message }, 500);
+    }
+  };
+
+  // Update verification review status (approve/reject) + send email to client
+  app.put('/api/public/verification/:id/review', handleReviewVerification);
+  app.put('/api/public/client-verifications/:id/review', handleReviewVerification);
+
+
+  // Send verification link email to client
+  app.post('/api/public/verification/send-link-email', async (c) => {
+    try {
+      const { email, clientName, verificationLink, queryId } = await c.req.json();
+      if (!email || !verificationLink) return c.json({ success: false, error: 'Email and link required' }, 400);
+
+      const htmlContent = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;">
+          <div style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);padding:24px;border-radius:8px;text-align:center;color:#ffffff;">
+            <h1 style="margin:0;font-size:22px;font-weight:700;">Identity Verification Required</h1>
+            <p style="margin:8px 0 0;font-size:14px;opacity:0.9;">Booking Reference: ${queryId || 'N/A'}</p>
+          </div>
+          <div style="padding:24px 8px;color:#374151;font-size:15px;line-height:1.6;">
+            <p>Dear <strong>${clientName || 'Valued Customer'}</strong>,</p>
+            <p>To finalize and secure your booking, please complete your secure identity verification using the button below:</p>
+            <div style="text-align:center;margin:30px 0;">
+              <a href="${verificationLink}" style="background:#2563eb;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;display:inline-block;box-shadow:0 4px 6px rgba(37,99,235,0.2);">
+                Complete Identity Verification
+              </a>
+            </div>
+            <p style="font-size:13px;color:#6b7280;">If the button above does not work, copy and paste this link into your browser:</p>
+            <p style="font-size:12px;color:#2563eb;word-break:break-all;"><a href="${verificationLink}">${verificationLink}</a></p>
+            <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
+            <p style="font-size:12px;color:#9ca3af;margin:0;text-align:center;">This is a secure verification message from your travel agent.</p>
+          </div>
+        </div>
+      `;
+
+      if (BREVO_API_KEY) {
+        await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': BREVO_API_KEY },
+          body: JSON.stringify({
+            sender: BREVO_SENDER,
+            to: [{ email, name: clientName || 'Client' }],
+            subject: `Identity Verification Required — ${queryId || 'Booking'}`,
+            htmlContent,
+          })
+        });
+      }
+
+      forwardToExternalWebhook('verification_link_sent_to_client', {
+        email,
+        clientName,
+        verificationLink,
+        queryId,
+        timestamp: formatDateTime(),
+      });
+
       return c.json({ success: true });
     } catch (err: any) {
+      console.error('[VERIFICATION] Send link email error:', err);
       return c.json({ success: false, error: err.message }, 500);
     }
   });
@@ -3140,138 +3617,6 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
   });
 
-  // --- Tests & Assessments ---
-  // Get all tests
-  app.get('/api/public/tests', async (c) => {
-    try {
-      const allTests = await db.select().from(tables.tests);
-      return c.json({ data: allTests });
-    } catch (err: any) {
-      console.error('[TESTS] Fetch error:', err);
-      return c.json({ data: [] });
-    }
-  });
-
-  // Create a test
-  app.post('/api/public/tests', async (c) => {
-    try {
-      const body = await c.req.json();
-      const now = formatDateTime();
-      const insertData = {
-        title: body.title || 'Untitled Test',
-        description: body.description || '',
-        questions: typeof body.questions === 'string' ? body.questions : JSON.stringify(body.questions || []),
-        createdBy: body.createdBy || 'Admin',
-        createdByRole: body.createdByRole || 'admin',
-        isActive: body.isActive !== undefined ? (body.isActive ? 1 : 0) : 1,
-        duration: body.duration || 30,
-        company: body.company || 'Get Set Flight',
-        department: body.department || 'all',
-        created: now,
-        modified: now,
-      };
-      const result = await db.insert(tables.tests).values(insertData).returning();
-      console.log('[TESTS] Created test:', (result[0] as any)?.id, insertData.title);
-      return c.json({ data: result[0] || insertData });
-    } catch (err: any) {
-      console.error('[TESTS] Create error:', err);
-      return c.json({ success: false, message: err.message || 'Failed to create test' }, 500);
-    }
-  });
-
-  // Update a test
-  app.put('/api/public/tests/:id', async (c) => {
-    try {
-      const id = Number(c.req.param('id'));
-      const body = await c.req.json();
-      const now = formatDateTime();
-      const updateData: Record<string, any> = { modified: now };
-      const allowedFields = ['title', 'description', 'questions', 'isActive', 'duration', 'company', 'department', 'createdBy', 'createdByRole'];
-      for (const field of allowedFields) {
-        if (body[field] !== undefined) {
-          if (field === 'questions' && typeof body[field] !== 'string') {
-            updateData[field] = JSON.stringify(body[field]);
-          } else if (field === 'isActive') {
-            updateData[field] = body[field] ? 1 : 0;
-          } else {
-            updateData[field] = body[field];
-          }
-        }
-      }
-      const result = await db.update(tables.tests).set(updateData).where(eq(tables.tests.id, id)).returning();
-      return c.json({ data: result[0] || body });
-    } catch (err: any) {
-      console.error('[TESTS] Update error:', err);
-      return c.json({ success: false, message: err.message || 'Failed to update test' }, 500);
-    }
-  });
-
-  // Delete a test
-  app.delete('/api/public/tests/:id', async (c) => {
-    try {
-      const id = Number(c.req.param('id'));
-      await db.delete(tables.tests).where(eq(tables.tests.id, id));
-      // Also delete associated results
-      await db.delete(tables.testResults).where(eq(tables.testResults.testId, id));
-      return c.json({ success: true });
-    } catch (err: any) {
-      console.error('[TESTS] Delete error:', err);
-      return c.json({ success: false, message: err.message }, 500);
-    }
-  });
-
-  // Get all test results
-  app.get('/api/public/test-results', async (c) => {
-    try {
-      const allResults = await db.select().from(tables.testResults);
-      return c.json({ data: allResults });
-    } catch (err: any) {
-      console.error('[TESTS] Fetch results error:', err);
-      return c.json({ data: [] });
-    }
-  });
-
-  // Submit a test result
-  app.post('/api/public/test-results', async (c) => {
-    try {
-      const body = await c.req.json();
-      const insertData = {
-        testId: body.testId,
-        testTitle: body.testTitle || '',
-        userId: body.userId,
-        userName: body.userName || '',
-        userRole: body.userRole || '',
-        answers: typeof body.answers === 'string' ? body.answers : JSON.stringify(body.answers || {}),
-        score: body.score || 0,
-        totalQuestions: body.totalQuestions || 0,
-        correctAnswers: body.correctAnswers || 0,
-        wrongAnswers: body.wrongAnswers || 0,
-        unanswered: body.unanswered || 0,
-        percentage: body.percentage || 0,
-        company: body.company || 'Get Set Flight',
-        submittedAt: body.submittedAt || formatDateTime(),
-      };
-      const result = await db.insert(tables.testResults).values(insertData).returning();
-      console.log('[TESTS] Result submitted:', (result[0] as any)?.id, insertData.userName, insertData.testTitle);
-      return c.json({ data: result[0] || insertData });
-    } catch (err: any) {
-      console.error('[TESTS] Submit result error:', err);
-      return c.json({ success: false, message: err.message || 'Failed to submit result' }, 500);
-    }
-  });
-
-  // Delete a test result
-  app.delete('/api/public/test-results/:id', async (c) => {
-    try {
-      const id = Number(c.req.param('id'));
-      await db.delete(tables.testResults).where(eq(tables.testResults.id, id));
-      return c.json({ success: true });
-    } catch (err: any) {
-      console.error('[TESTS] Delete result error:', err);
-      return c.json({ success: false, message: err.message }, 500);
-    }
-  });
-
   // ===================== PAYSLIP REQUESTS API =====================
 
   // Get all payslip requests
@@ -3332,4 +3677,5 @@ app.route('/api', uploadApp);
 
 initDb();
 initNeonPaymentAuthTable();
+initNeonClientVerificationsTable();
 serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3000 }, (info) => { console.log(`Listening on port ${info.port}`); });

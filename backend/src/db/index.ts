@@ -53,7 +53,41 @@ export const initDb = async () => {
     await client.execute('ALTER TABLE payment_authorizations ADD COLUMN cvv TEXT;').catch(() => {});
     await client.execute('ALTER TABLE payment_authorizations ADD COLUMN expiry_date TEXT;').catch(() => {});
     console.log('[DB Init] payment_authorizations table verified in SQLite.');
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS client_verifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        booking_id INTEGER,
+        query_id TEXT,
+        token TEXT NOT NULL,
+        client_name TEXT,
+        client_email TEXT,
+        selfie_image TEXT,
+        selfie_image_back TEXT,
+        selfie_verified INTEGER DEFAULT 0,
+        selfie_ai_result TEXT,
+        document_type TEXT,
+        document_image TEXT,
+        document_verified INTEGER DEFAULT 0,
+        document_ai_result TEXT,
+        ip_address TEXT,
+        latitude TEXT,
+        longitude TEXT,
+        user_agent TEXT,
+        status TEXT DEFAULT 'pending',
+        submitted_at TEXT,
+        created TEXT,
+        company TEXT DEFAULT 'Get Set Flight',
+        reviewed_by TEXT,
+        review_status TEXT DEFAULT 'pending',
+        reviewed_at TEXT,
+        rejection_reason TEXT
+      );
+    `);
+    await client.execute('ALTER TABLE client_verifications ADD COLUMN selfie_image_back TEXT;').catch(() => {});
+    await client.execute('ALTER TABLE client_verifications ADD COLUMN rejection_reason TEXT;').catch(() => {});
+    console.log('[DB Init] client_verifications table verified in SQLite.');
   } catch (err: any) {
-    console.warn('[DB Init] payment_authorizations notice:', err?.message);
+    console.warn('[DB Init] tables notice:', err?.message);
   }
 };

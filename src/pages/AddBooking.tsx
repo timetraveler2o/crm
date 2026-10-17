@@ -1,3 +1,14 @@
+import { 
+  AttachmentDoc, 
+  parseAttachmentDocs, 
+  serializeAttachmentDocs, 
+  processUploadedFile, 
+  downloadAttachment, 
+  isImageDoc, 
+  getDocBadgeInfo, 
+  formatFileSize 
+} from '../lib/documentUtils';
+import AttachmentPreviewModal from '../components/AttachmentPreviewModal';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useCrmStore } from '../store/crmStore';
 import { QUERY_STATUSES, QUERY_SOURCES, CABINS, PnrDetail, RemarkEntry, SUPPLIERS, PAYMENT_METHODS } from '../types';
@@ -8,6 +19,7 @@ import { Plus, X, Check, ChevronsUpDown, Image as ImageIcon, ArrowLeft, Eye, Mai
 import { client } from '../lib/api';
 import { useNavigate, useParams } from 'react-router-dom';
 import { API_BASE_URL } from '../lib/api';
+import { safeParsePnrDetails } from '../lib/utils';
 
 // Force-download helper: fetch blob and trigger download for cross-origin URLs
 function forceDownloadFile(url: string, filename: string) {
@@ -42,17 +54,14 @@ function forceDownloadFile(url: string, filename: string) {
 function VerificationSection({ bookingId }: { bookingId: number }) {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [zoomImg, setZoomImg] = useState<string | null>(null);
 
   useEffect(() => {
     client.api.fetch(`/api/public/verification/booking/${bookingId}`)
       .then(r => r.json())
       .then((res: any) => {
         if (res.success) {
-          // Only show approved verifications in edit form
-          const approvedOnly = (res.data || []).filter((v: any) => 
-            (v.reviewStatus || v.review_status) === 'approved' || v.status === 'approved'
-          );
-          setData(approvedOnly);
+          setData(res.data || []);
         }
       })
       .catch(() => {})
@@ -63,43 +72,46 @@ function VerificationSection({ bookingId }: { bookingId: number }) {
   if (!data.length) return null;
 
   return (
-    <div className="mt-6 bg-white rounded-2xl border border-gray-200 overflow-hidden">
-      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 text-white">
+    <div className="mt-6 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 p-4 text-white flex items-center justify-between">
         <h3 className="font-bold text-base flex items-center gap-2">
-          <Eye size={18} /> Client Verification Records
+          <Eye size={18} /> Client Identity Verification Details
         </h3>
+        <span className="text-xs bg-white/20 px-2.5 py-1 rounded-full font-medium">{data.length} record{data.length > 1 ? 's' : ''}</span>
       </div>
       <div className="p-4 space-y-4">
         {data.map((v: any, idx: number) => (
-          <div key={v.id || idx} className={`border rounded-xl p-4 ${
-            (v.reviewStatus || v.review_status) === 'approved' ? 'border-green-300 bg-green-50/50' : 
-            (v.reviewStatus || v.review_status) === 'rejected' ? 'border-red-300 bg-red-50/50' : 
-            'border-gray-200 bg-gray-50/50'
+          <div key={v.id || idx} className={`border rounded-xl p-4 transition-all ${
+            (v.reviewStatus || v.review_status) === 'approved' ? 'border-green-300 bg-green-50/40' : 
+            (v.reviewStatus || v.review_status) === 'rejected' ? 'border-red-300 bg-red-50/40' : 
+            'border-blue-200 bg-blue-50/30'
           }`}>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
                 <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                  v.status === 'approved' ? 'bg-green-100 text-green-700' :
-                  v.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                  v.status === 'submitted' ? 'bg-blue-100 text-blue-700' :
-                  'bg-yellow-100 text-yellow-700'
-                }`}>{(v.status || 'pending').toUpperCase()}</span>
-                {(v.documentType || v.document_type) && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{v.documentType || v.document_type}</span>}
+                  (v.reviewStatus || v.review_status || v.status) === 'approved' ? 'bg-green-100 text-green-700 border border-green-200' :
+                  (v.reviewStatus || v.review_status || v.status) === 'rejected' ? 'bg-red-100 text-red-700 border border-red-200' :
+                  v.status === 'submitted' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                  'bg-yellow-100 text-yellow-700 border border-yellow-200'
+                }`}>{((v.reviewStatus || v.review_status || v.status) || 'pending').toUpperCase()}</span>
+                {(v.documentType || v.document_type) && <span className="text-xs bg-gray-100 text-gray-700 font-semibold px-2.5 py-0.5 rounded-full border border-gray-200">{v.documentType || v.document_type}</span>}
+                {v.client_name && <span className="text-xs text-gray-700 font-medium">Client: <strong>{v.client_name}</strong></span>}
+                {v.client_email && <span className="text-xs text-gray-500">({v.client_email})</span>}
               </div>
-              <span className="text-xs text-gray-400">{v.created || v.submitted_at || v.submittedAt}</span>
+              <span className="text-xs text-gray-500 font-mono">{v.submitted_at || v.created}</span>
             </div>
 
             {/* Images Preview */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
               {(v.selfieImage || v.selfie_image) && (() => {
                 const raw = v.selfieImage || v.selfie_image;
                 const src = raw.startsWith('data:image/') ? raw : raw.startsWith('http') ? raw : raw.startsWith('uploads/') ? `${API_BASE_URL}/${raw}` : `data:image/jpeg;base64,${raw}`;
                 return (
-                  <div className="relative group">
-                    <img src={src} alt="Selfie" className="w-full h-20 object-cover rounded-lg border" />
-                    <span className="absolute bottom-0.5 left-0.5 text-[8px] bg-black/60 text-white px-1 rounded">Selfie</span>
-                    <button onClick={() => forceDownloadFile(src, `selfie-${v.id}.jpg`)} className="absolute top-0.5 right-0.5 p-1 bg-white/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Download size={10} />
+                  <div className="relative group cursor-pointer" onClick={() => setZoomImg(src)}>
+                    <img src={src} alt="Selfie" className="w-full h-24 object-cover rounded-xl border border-gray-200 shadow-sm hover:scale-[1.02] transition-transform" />
+                    <span className="absolute bottom-1 left-1 text-[10px] bg-black/70 text-white px-2 py-0.5 rounded font-medium">Selfie Front</span>
+                    <button onClick={(e) => { e.stopPropagation(); forceDownloadFile(src, `selfie-${v.id}.jpg`); }} className="absolute top-1 right-1 p-1.5 bg-white/90 hover:bg-white text-gray-700 rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Download size={12} />
                     </button>
                   </div>
                 );
@@ -108,11 +120,11 @@ function VerificationSection({ bookingId }: { bookingId: number }) {
                 const raw = v.selfie_image_back || v.selfieImageBack;
                 const src = raw.startsWith('data:image/') ? raw : raw.startsWith('http') ? raw : raw.startsWith('uploads/') ? `${API_BASE_URL}/${raw}` : `data:image/jpeg;base64,${raw}`;
                 return (
-                  <div className="relative group">
-                    <img src={src} alt="Selfie Back" className="w-full h-20 object-cover rounded-lg border" />
-                    <span className="absolute bottom-0.5 left-0.5 text-[8px] bg-black/60 text-white px-1 rounded">Back</span>
-                    <button onClick={() => forceDownloadFile(src, `selfie-back-${v.id}.jpg`)} className="absolute top-0.5 right-0.5 p-1 bg-white/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Download size={10} />
+                  <div className="relative group cursor-pointer" onClick={() => setZoomImg(src)}>
+                    <img src={src} alt="Selfie Back" className="w-full h-24 object-cover rounded-xl border border-gray-200 shadow-sm hover:scale-[1.02] transition-transform" />
+                    <span className="absolute bottom-1 left-1 text-[10px] bg-black/70 text-white px-2 py-0.5 rounded font-medium">Selfie with Card</span>
+                    <button onClick={(e) => { e.stopPropagation(); forceDownloadFile(src, `selfie-back-${v.id}.jpg`); }} className="absolute top-1 right-1 p-1.5 bg-white/90 hover:bg-white text-gray-700 rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Download size={12} />
                     </button>
                   </div>
                 );
@@ -125,38 +137,61 @@ function VerificationSection({ bookingId }: { bookingId: number }) {
                   const photos = JSON.parse(docImg);
                   if (Array.isArray(photos)) {
                     return photos.map((photo: string, pi: number) => (
-                      <div key={pi} className="relative group">
-                        <img src={normSrc(photo)} alt={`Doc ${pi+1}`} className="w-full h-20 object-cover rounded-lg border" />
-                        <span className="absolute bottom-0.5 left-0.5 text-[8px] bg-black/60 text-white px-1 rounded">Doc {pi+1}</span>
-                        <button onClick={() => forceDownloadFile(normSrc(photo), `doc-${v.id}-${pi+1}.jpg`)} className="absolute top-0.5 right-0.5 p-1 bg-white/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Download size={10} />
+                      <div key={pi} className="relative group cursor-pointer" onClick={() => setZoomImg(normSrc(photo))}>
+                        <img src={normSrc(photo)} alt={`Doc ${pi+1}`} className="w-full h-24 object-cover rounded-xl border border-gray-200 shadow-sm hover:scale-[1.02] transition-transform" />
+                        <span className="absolute bottom-1 left-1 text-[10px] bg-black/70 text-white px-2 py-0.5 rounded font-medium">Doc Photo #{pi+1}</span>
+                        <button onClick={(e) => { e.stopPropagation(); forceDownloadFile(normSrc(photo), `doc-${v.id}-${pi+1}.jpg`); }} className="absolute top-1 right-1 p-1.5 bg-white/90 hover:bg-white text-gray-700 rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Download size={12} />
                         </button>
                       </div>
                     ));
                   }
                 } catch {}
                 return (
-                  <div className="relative group">
-                    <img src={normSrc(docImg)} alt="Document" className="w-full h-20 object-cover rounded-lg border" />
-                    <span className="absolute bottom-0.5 left-0.5 text-[8px] bg-black/60 text-white px-1 rounded">Doc</span>
-                    <button onClick={() => forceDownloadFile(normSrc(docImg), `doc-${v.id}.jpg`)} className="absolute top-0.5 right-0.5 p-1 bg-white/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Download size={10} />
+                  <div className="relative group cursor-pointer" onClick={() => setZoomImg(normSrc(docImg))}>
+                    <img src={normSrc(docImg)} alt="Document" className="w-full h-24 object-cover rounded-xl border border-gray-200 shadow-sm hover:scale-[1.02] transition-transform" />
+                    <span className="absolute bottom-1 left-1 text-[10px] bg-black/70 text-white px-2 py-0.5 rounded font-medium">Document</span>
+                    <button onClick={(e) => { e.stopPropagation(); forceDownloadFile(normSrc(docImg), `doc-${v.id}.jpg`); }} className="absolute top-1 right-1 p-1.5 bg-white/90 hover:bg-white text-gray-700 rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Download size={12} />
                     </button>
                   </div>
                 );
               })()}
             </div>
 
-            {/* Status */}
-            {(v.reviewStatus || v.review_status) === 'approved' && (
-              <p className="text-xs text-green-700 font-medium">✓ Approved by {v.reviewedBy || v.reviewed_by} • {v.reviewedAt || v.reviewed_at}</p>
-            )}
-            {(v.reviewStatus || v.review_status) === 'rejected' && (
-              <p className="text-xs text-red-700 font-medium">✗ Rejected by {v.reviewedBy || v.reviewed_by} • {v.reviewedAt || v.reviewed_at}{(v.rejectionReason || v.rejection_reason) ? ` — ${v.rejectionReason || v.rejection_reason}` : ''}</p>
-            )}
+            {/* Review Status & Metadata */}
+            <div className="pt-2 border-t border-gray-200/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div>
+                {(v.reviewStatus || v.review_status) === 'approved' && (
+                  <span className="text-green-700 font-semibold flex items-center gap-1">✓ Approved by {v.reviewedBy || v.reviewed_by || 'Admin'} • {v.reviewedAt || v.reviewed_at}</span>
+                )}
+                {(v.reviewStatus || v.review_status) === 'rejected' && (
+                  <span className="text-red-700 font-semibold flex items-center gap-1">✗ Rejected by {v.reviewedBy || v.reviewed_by || 'Admin'} • {v.reviewedAt || v.reviewed_at}{(v.rejectionReason || v.rejection_reason) ? ` — ${v.rejectionReason || v.rejection_reason}` : ''}</span>
+                )}
+                {!(v.reviewStatus || v.review_status) && v.status === 'submitted' && (
+                  <span className="text-blue-700 font-medium">⏳ Submitted by client • Awaiting review</span>
+                )}
+              </div>
+              <div className="text-gray-400 text-[11px] flex items-center gap-2">
+                {v.ip_address && <span>IP: {v.ip_address}</span>}
+                {v.latitude && v.longitude && <span>Loc: {v.latitude}, {v.longitude}</span>}
+              </div>
+            </div>
           </div>
         ))}
       </div>
+
+      {/* Zoom Modal */}
+      {zoomImg && (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[150] p-4" onClick={() => setZoomImg(null)}>
+          <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setZoomImg(null)} className="absolute -top-10 right-0 text-white hover:text-gray-300 p-1">
+              <X size={24} />
+            </button>
+            <img src={zoomImg} alt="Enlarged document" className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -503,7 +538,8 @@ export default function AddBooking() {
   const [remarksList, setRemarksList] = useState<RemarkEntry[]>([]);
   const [newRemark, setNewRemark] = useState('');
   const [pnrDetails, setPnrDetails] = useState<PnrDetail[]>([{ pnr: '', firstName: '', lastName: '', airline: '', supplier: '', paymentMethod: '', cost: '' as any, sell: '' as any, fee: '' as any, mco: '' as any, gpm: '' as any }]);
-  const [images, setImages] = useState<string[]>([]);
+  const [images, setImages] = useState<AttachmentDoc[]>([]);
+  const [activePreviewDoc, setActivePreviewDoc] = useState<AttachmentDoc | null>(null);
   const [uploading, setUploading] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, boolean>>({});
   // (queryOrigin/Destination now managed inside AirportInput component)
@@ -554,19 +590,37 @@ export default function AddBooking() {
           setRemarksList(b.remarks ? [{ text: b.remarks, addedBy: b.addedBy, date: b.created }] : []);
         }
 
-        if (b.pnrDetails) {
-          try {
-            const parsed = JSON.parse(b.pnrDetails);
-            setPnrDetails(parsed.map((p: any) => ({
-              pnr: p.pnr || '', firstName: p.firstName || '', lastName: p.lastName || '',
-              airline: p.airline || '', supplier: p.supplier || '', paymentMethod: p.paymentMethod || '', cost: p.cost || 0, sell: p.sell || 0,
-              fee: p.fee || 0, mco: p.mco || 0, gpm: p.gpm || 0
-            })));
-          } catch {
-            setPnrDetails([{ pnr: b.pnr || '', firstName: b.firstName, lastName: b.lastName, airline: '', supplier: '', paymentMethod: '', cost: '' as any, sell: '' as any, fee: '' as any, mco: '' as any, gpm: '' as any }]);
-          }
+        const existingPnrs = safeParsePnrDetails(b);
+        if (existingPnrs.length > 0) {
+          setPnrDetails(existingPnrs.map((p: any) => ({
+            pnr: p.pnr || '',
+            firstName: p.firstName || '',
+            lastName: p.lastName || '',
+            airline: p.airline || '',
+            supplier: p.supplier || '',
+            paymentMethod: p.paymentMethod || '',
+            cost: p.cost ?? '',
+            sell: p.sell ?? '',
+            fee: p.fee ?? '',
+            mco: p.mco ?? '',
+            gpm: p.gpm ?? ''
+          })));
+        } else {
+          setPnrDetails([{
+            pnr: b.pnr || '',
+            firstName: b.firstName || '',
+            lastName: b.lastName || '',
+            airline: '',
+            supplier: '',
+            paymentMethod: '',
+            cost: '' as any,
+            sell: '' as any,
+            fee: '' as any,
+            mco: '' as any,
+            gpm: '' as any
+          }]);
         }
-        setImages(b.images ? b.images.split(',').filter(Boolean) : []);
+        setImages(parseAttachmentDocs(b.images));
         setHasLoadedData(true);
       }
     }
@@ -642,89 +696,23 @@ export default function AddBooking() {
     if (!files || files.length === 0) return;
     setUploading(true);
     try {
-      const newImages = [...images];
+      const addedDocs: AttachmentDoc[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const isImage = file.type.startsWith('image/');
-        // Use uploadImage (with compression) for images, uploadFile (no compression) for documents
-        const path = isImage ? await uploadImage(file) : await uploadFile(file);
-        newImages.push(path);
+        const doc = await processUploadedFile(file);
+        addedDocs.push(doc);
       }
-      setImages(newImages);
+      setImages(prev => [...prev, ...addedDocs]);
     } catch (err) {
-      console.error('Upload failed', err);
-      alert('Failed to upload file. Please try again.');
+      console.error('File upload failed', err);
+      alert('Failed to process file. Please try again.');
     } finally {
       setUploading(false);
-      // Reset input so same file can be re-uploaded
       if (e.target) e.target.value = '';
     }
   };
 
-  const removeImage = (index: number) => setImages(images.filter((_, i) => i !== index));
-
-  const isImageFile = (path: string) => {
-    const ext = path.split('.').pop()?.toLowerCase() || '';
-    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext) || path.includes('image');
-  };
-
-  const getFileName = (path: string) => {
-    const parts = path.split('/');
-    const name = parts[parts.length - 1];
-    // Remove timestamp prefix if present
-    return name.replace(/^\d+-/, '');
-  };
-
-  const getFileIcon = (path: string) => {
-    const ext = path.split('.').pop()?.toLowerCase() || '';
-    if (['pdf'].includes(ext)) return '📄';
-    if (['doc', 'docx'].includes(ext)) return '📝';
-    if (['xls', 'xlsx', 'csv'].includes(ext)) return '📊';
-    if (['txt'].includes(ext)) return '📃';
-    return '📎';
-  };
-
-  const handlePreviewImage = async (imgPath: string) => {
-    let url = '';
-    if (imgPath.startsWith('http')) {
-      url = imgPath;
-    } else if (resolvedImages[imgPath]) {
-      url = resolvedImages[imgPath];
-    } else {
-      url = await getImageUrl(imgPath);
-      if (url) {
-        setResolvedImages(prev => ({ ...prev, [imgPath]: url }));
-      }
-    }
-    if (!url) return;
-    // For images, show preview modal. For documents, open/download in new tab
-    if (isImageFile(imgPath)) {
-      setPreviewImage(url);
-    } else {
-      window.open(url, '_blank');
-    }
-  };
-
-  const handleDownloadFile = async (imgPath: string) => {
-    let url = '';
-    if (imgPath.startsWith('http')) {
-      url = imgPath;
-    } else if (resolvedImages[imgPath]) {
-      url = resolvedImages[imgPath];
-    } else {
-      url = await getImageUrl(imgPath);
-      if (url) setResolvedImages(prev => ({ ...prev, [imgPath]: url }));
-    }
-    if (url) {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = getFileName(imgPath);
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
-  };
+  const removeImage = (index: number) => setImages(prev => prev.filter((_, i) => i !== index));
 
   const addRemark = () => {
     if (!newRemark.trim()) return;
@@ -759,8 +747,8 @@ export default function AddBooking() {
   };
 
   const currentStatus = form.queryStatus?.trim() || '';
-  const showPnrSection = ['Date Change', 'Schedule Change', 'Send to QC', 'Cancellation', 'Sold', 'Hold', 'Variance', 'Post Sale', 'Closed Query'].some(s => currentStatus.includes(s));
-  const showImageSection = ['Date Change', 'Schedule Change', 'Send to QC', 'Cancellation', 'Sold', 'Hold', 'Post Sale', 'Variance', 'Closed Query'].some(s => currentStatus.includes(s)) || images.length > 0;
+  const showPnrSection = true; // Always allow PNR details for all queries
+  const showImageSection = true; // Always allow attaching images and documents for all query types
 
   const isAgent = currentUser?.role === 'Agent';
   const isSupervisorOrAbove = ['Supervisor', 'Manager', 'Admin', 'Operation Manager'].includes(currentUser?.role || '');
@@ -805,14 +793,18 @@ export default function AddBooking() {
       finalRemarks.push({ text: newRemark.trim(), addedBy: currentUser?.name || 'Admin', date: new Date().toLocaleString() });
     }
 
-    const validPnrs = pnrDetails.filter(p => p.pnr.trim() !== '');
-    const pnrRegex = /^[A-Z0-9]{6}$/;
+    const validPnrs = pnrDetails.filter(p => p.pnr && p.pnr.trim() !== '');
+    const pnrRegex = /^[A-Z0-9]{4,8}$/i;
     const needsPnr = ['Date Change', 'Schedule Change', 'Send to QC', 'Cancellation', 'Sold', 'Hold', 'Variance', 'Post Sale', 'Closed Query'].some(s => currentStatus.includes(s));
     const needsImage = false; // Images are optional - user can upload for any status
 
     if (needsPnr && validPnrs.length > 0) {
       for (const p of validPnrs) {
-        if (p.pnr && !pnrRegex.test(p.pnr)) { alert(`Invalid PNR: ${p.pnr}. Must be 6 uppercase alphanumeric characters.`); setIsSaving(false); return; }
+        if (p.pnr && !pnrRegex.test(p.pnr.trim())) {
+          alert(`Invalid PNR: ${p.pnr}. Must be 4-8 uppercase alphanumeric characters.`);
+          setIsSaving(false);
+          return;
+        }
       }
     }
     // Images are optional for all statuses - no blocking validation
@@ -844,12 +836,26 @@ export default function AddBooking() {
       tripType: form.tripType,
       currency: form.currency,
       remarks: JSON.stringify(finalRemarks),
-      pnr: validPnrs.map(p => p.pnr).join(','),
+      pnr: validPnrs.map(p => p.pnr.trim()).join(','),
       pnrDetails: JSON.stringify(pnrDetails.map(p => ({
-        ...p, cost: Number(p.cost) || 0, sell: Number(p.sell) || 0,
-        fee: Number(p.fee) || 0, mco: Number(p.mco) || 0, gpm: Number(p.gpm) || 0
+        ...p,
+        pnr: p.pnr ? p.pnr.trim().toUpperCase() : '',
+        cost: Number(p.cost) || 0,
+        sell: Number(p.sell) || 0,
+        fee: Number(p.fee) || 0,
+        mco: Number(p.mco) || 0,
+        gpm: parseFloat((Number(p.gpm) || 0).toFixed(2))
       }))),
-      images: images.join(','),
+      pnr_details: JSON.stringify(pnrDetails.map(p => ({
+        ...p,
+        pnr: p.pnr ? p.pnr.trim().toUpperCase() : '',
+        cost: Number(p.cost) || 0,
+        sell: Number(p.sell) || 0,
+        fee: Number(p.fee) || 0,
+        mco: Number(p.mco) || 0,
+        gpm: parseFloat((Number(p.gpm) || 0).toFixed(2))
+      }))),
+      images: serializeAttachmentDocs(images),
       company: form.company || (() => {
         if (activeCompany === 'LBT') return 'Look Book Ticket';
         if (activeCompany === 'travelo') return 'Traveloboom';
@@ -1386,49 +1392,88 @@ export default function AddBooking() {
         {/* Section 5: Documents/Images */}
         {showImageSection && (
           <div className="card p-4 sm:p-6">
-            <h3 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider mb-5">
-              <span className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">5</span>
-              Documents / Images
-            </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-gray-800 uppercase tracking-wider">
+                <span className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                Documents & Images ({images.length})
+              </h3>
+              <span className="text-xs text-gray-500 font-medium">Supports PNG, JPG, PDF, DOCX, XLSX, TXT (Live Preview & Download)</span>
+            </div>
+
             <div className="flex flex-wrap gap-4">
-              {images.map((img, idx) => {
-                const displayUrl = resolvedImages[img] || (img.startsWith('http') ? img : '');
-                const isImg = isImageFile(img);
+              {images.map((doc, idx) => {
+                const isImg = isImageDoc(doc);
+                const badge = getDocBadgeInfo(doc);
                 return (
-                  <div key={idx} className="relative group w-28 h-28 border-2 border-gray-200 rounded-lg overflow-hidden bg-gray-50">
-                    {isImg && displayUrl ? (
-                      <img src={displayUrl} alt="Doc" className="w-full h-full object-cover" />
-                    ) : isImg ? (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <ImageIcon size={24} className="text-gray-300" />
-                      </div>
+                  <div key={doc.id || idx} className="relative group w-32 h-32 border-2 border-gray-200 hover:border-blue-400 rounded-2xl overflow-hidden bg-gray-50 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                    {isImg ? (
+                      <img src={doc.url} alt={doc.name} className="w-full h-full object-cover" />
                     ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center p-2">
-                        <span className="text-2xl">{getFileIcon(img)}</span>
-                        <span className="text-[9px] text-gray-500 mt-1 text-center truncate w-full">{getFileName(img)}</span>
+                      <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center bg-gradient-to-b from-gray-50 to-gray-100">
+                        <span className="text-3xl mb-1">{badge.icon}</span>
+                        <span className="text-[10px] font-bold text-gray-800 truncate w-full px-1">{doc.name}</span>
+                        <span className="text-[9px] text-gray-400 mt-0.5">{badge.label} {doc.size ? `• ${formatFileSize(doc.size)}` : ''}</span>
                       </div>
                     )}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <button onClick={() => handlePreviewImage(img)} className="bg-white text-gray-700 rounded-full p-1.5 hover:bg-blue-50 shadow-sm" title={isImg ? 'Preview' : 'Open'}>
-                        <Eye size={14} />
-                      </button>
-                      <button onClick={() => handleDownloadFile(img)} className="bg-white text-blue-600 rounded-full p-1.5 hover:bg-blue-50 shadow-sm" title="Download">
-                        <Download size={14} />
-                      </button>
-                      <button onClick={() => removeImage(idx)} className="bg-white text-red-500 rounded-full p-1.5 hover:bg-red-50 shadow-sm" title="Remove">
-                        <X size={14} />
-                      </button>
+
+                    {/* Hover Action Overlay */}
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-between p-2">
+                      <span className="text-[10px] text-white font-semibold truncate w-full text-center px-1">
+                        {doc.name}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button 
+                          type="button"
+                          onClick={() => setActivePreviewDoc(doc)} 
+                          className="bg-white text-gray-800 rounded-full p-2 hover:bg-blue-50 shadow-md transition-transform hover:scale-110" 
+                          title="Preview"
+                        >
+                          <Eye size={14} />
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => downloadAttachment(doc)} 
+                          className="bg-white text-blue-600 rounded-full p-2 hover:bg-blue-50 shadow-md transition-transform hover:scale-110" 
+                          title="Download"
+                        >
+                          <Download size={14} />
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => removeImage(idx)} 
+                          className="bg-white text-red-600 rounded-full p-2 hover:bg-red-50 shadow-md transition-transform hover:scale-110" 
+                          title="Delete"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                      <span className="text-[9px] text-white/80 font-medium">
+                        {formatFileSize(doc.size)}
+                      </span>
                     </div>
                   </div>
                 );
               })}
-              <label className="w-28 h-28 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors">
-                <Upload size={24} className="text-gray-400" />
-                <span className="text-xs text-gray-500 mt-1">Upload</span>
-                <input type="file" className="hidden" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={handleImageUpload} disabled={uploading} />
+
+              <label className="w-32 h-32 border-2 border-dashed border-gray-300 hover:border-blue-500 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-blue-50/50 transition-all group">
+                <Upload size={24} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
+                <span className="text-xs font-bold text-gray-600 group-hover:text-blue-600 mt-1.5">Upload File</span>
+                <span className="text-[9px] text-gray-400 mt-0.5">Images & Docs</span>
+                <input 
+                  type="file" 
+                  className="hidden" 
+                  multiple 
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf" 
+                  onChange={handleImageUpload} 
+                  disabled={uploading} 
+                />
               </label>
             </div>
-            {uploading && <p className="text-sm text-blue-600 animate-pulse mt-2">Uploading...</p>}
+            {uploading && (
+              <p className="text-xs text-blue-600 animate-pulse mt-2 flex items-center gap-1.5">
+                <Loader2 size={13} className="animate-spin" /> Processing & securing attachments...
+              </p>
+            )}
           </div>
         )}
 
@@ -1452,6 +1497,8 @@ export default function AddBooking() {
           </div>
         </div>
       </div>
+
+      <AttachmentPreviewModal doc={activePreviewDoc} onClose={() => setActivePreviewDoc(null)} />
 
       {/* Verification Data Section (Edit Mode) */}
       {isEdit && editId && <VerificationSection bookingId={editId} />}

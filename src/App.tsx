@@ -1,3 +1,4 @@
+import ErrorBoundary from './components/ErrorBoundary';
 import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
@@ -18,7 +19,6 @@ import LoginActivity from './pages/LoginActivity';
 import IpWhitelist from './pages/IpWhitelist';
 import AddBooking from './pages/AddBooking';
 import Updates from './pages/Updates';
-import Tests from './pages/Tests';
 import ClientVerification from './pages/ClientVerification';
 import Payslip from './pages/Payslip';
 import PaymentAuthorizations from './pages/PaymentAuthorizations';
@@ -33,7 +33,6 @@ const PERMISSION_ROUTE_MAP: Record<string, string[]> = {
   'Booking Management': ['/bookings', '/site-bookings', '/bookings/add', '/bookings/edit'],
   'Payment Authorization': ['/payment-authorizations'],
   'Attendance': ['/attendance', '/break-monitor', '/productivity'],
-  'Tests': ['/tests'],
   'Payslip': ['/payslip'],
   'Notice Board': ['/updates'],
   'Reports': ['/reports'],
@@ -101,7 +100,8 @@ function App() {
 
   return (
     <BrowserRouter>
-      <Routes>
+      <ErrorBoundary viewName="CRM Application">
+        <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/payment" element={<PublicPayment />} />
         <Route path="/verify/:token" element={<ClientVerification />} />
@@ -130,13 +130,13 @@ function App() {
           <Route path="login-activity" element={<PermissionRoute path="/login-activity"><LoginActivity /></PermissionRoute>} />
           <Route path="ip-whitelist" element={<PermissionRoute path="/ip-whitelist"><IpWhitelist /></PermissionRoute>} />
           <Route path="updates" element={<Updates />} />
-          <Route path="tests" element={<Tests />} />
           <Route path="payslip" element={<Payslip />} />
           <Route path="payment-authorizations" element={<PaymentAuthorizations />} />
 
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }
