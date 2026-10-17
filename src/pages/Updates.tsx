@@ -363,7 +363,7 @@ export default function Updates() {
       if (companyTargets.includes('All EMT') && displayCompany === 'LBT') companyMatch = true;
       if (companyTargets.includes('All Travelo') && displayCompany === 'travelo') companyMatch = true;
       let roleMatch = roleTargets.length === 0;
-      if (roleTargets.includes('Agent') && userRole === 'Agent') roleMatch = true;
+      if ((roleTargets.includes('Agent') || roleTargets.includes('Travel Consultant')) && ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(userRole)) roleMatch = true;
       if (roleTargets.includes('Supervisor') && userRole === 'Supervisor') roleMatch = true;
       if (roleTargets.includes('Manager') && (userRole === 'Manager' || userRole === 'Operation Manager')) roleMatch = true;
       if (roleTargets.includes('Admin') && (userRole === 'Admin' || userRole === 'Super Admin')) roleMatch = true;

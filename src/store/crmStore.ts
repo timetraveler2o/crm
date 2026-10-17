@@ -81,6 +81,7 @@ interface CrmState {
 
 export const useCrmStore = create<CrmState>()(persist((set, get) => ({
   roles: [],
+  auditLogs: [],
   users: [],
   queryStatuses: [],
   bookings: [],
@@ -116,6 +117,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         safeJson(client.api.fetch('/api/public/query-statuses')),
         safeJson(client.api.fetch('/api/public/site-bookings')),
         safeJson(client.api.fetch('/api/public/attendance')),
+        safeJson(client.api.fetch('/api/public/audit-logs')),
       ]);
 
       const currentSb = get().siteBookings;
@@ -154,7 +156,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       if (currentUser && currentBookings.length > 0) {
         const roleLower = (currentUser.role || '').toLowerCase();
         const isSupervisor = ['admin', 'super admin', 'superuser', 'operation manager', 'manager', 'supervisor'].includes(roleLower);
-        const isAgent = roleLower === 'agent';
+        const isAgent = ['agent', 'travel consultant', 'senior travel consultant'].includes(roleLower);
 
         newBookingsData.forEach((nb: any) => {
           const ob = currentBookings.find((c: any) => c.id === nb.id);
@@ -204,6 +206,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       set({
         users: parsedUsers,
         roles: roles.data || [],
+        auditLogs: auditRes?.data || [],
         bookings: (bookings.data || []).map(normalizeBooking),
         attendanceSheet: sheet.data || [],
         leaveBalances: balances.data || [],
@@ -215,6 +218,37 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
     } catch (err: any) {
       console.error('Failed to fetch data:', err);
       set({ error: err.message, isLoading: false });
+    }
+  },
+
+
+  fetchAuditLogs: async () => {
+    try {
+      const res = await client.api.fetch('/api/public/audit-logs');
+      if (res.ok) {
+        const d = await res.json();
+        set({ auditLogs: d.data || [] });
+      }
+    } catch (e) {
+      console.warn('Failed to fetch audit logs:', e);
+    }
+  },
+
+  addAuditLog: async (log) => {
+    try {
+      const res = await client.api.fetch('/api/public/audit-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(log),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.data) {
+          set((s) => ({ auditLogs: [d.data, ...s.auditLogs] }));
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to save audit log:', e);
     }
   },
 

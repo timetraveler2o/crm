@@ -87,6 +87,26 @@ export const initDb = async () => {
     await client.execute('ALTER TABLE client_verifications ADD COLUMN selfie_image_back TEXT;').catch(() => {});
     await client.execute('ALTER TABLE client_verifications ADD COLUMN rejection_reason TEXT;').catch(() => {});
     console.log('[DB Init] client_verifications table verified in SQLite.');
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        action TEXT NOT NULL,
+        performedBy TEXT NOT NULL,
+        performedByRole TEXT DEFAULT '',
+        targetType TEXT NOT NULL,
+        targetId TEXT DEFAULT '',
+        targetName TEXT NOT NULL,
+        details TEXT NOT NULL,
+        changes TEXT DEFAULT '',
+        created TEXT NOT NULL
+      );
+    `).catch(() => {});
+    await client.execute('ALTER TABLE users ADD COLUMN permissions TEXT;').catch(() => {});
+    await client.execute("UPDATE roles SET roleName = 'Travel Consultant' WHERE LOWER(roleName) = 'agent';").catch(() => {});
+    await client.execute("UPDATE users SET role = 'Travel Consultant' WHERE LOWER(role) = 'agent';").catch(() => {});
+
   } catch (err: any) {
     console.warn('[DB Init] tables notice:', err?.message);
   }

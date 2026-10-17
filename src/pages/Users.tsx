@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useCrmStore } from '../store/crmStore';
-import { ROLE_NAMES } from '../types';
+import { ROLE_NAMES, PERMISSIONS } from '../types';
+import { PERMISSION_GROUPS } from './Roles';
 import { COMPANIES } from '../types';
 import type { AmadeusCredential } from '../types';
 import { useAuthStore } from '../store/authStore';
 import Avatar from '../components/Avatar';
 import Pagination from '../components/Pagination';
-import { Plus, Edit2, Trash2, X, Search, Download, Lock, Loader2, Upload, FileText, Printer, Camera, UserCheck, UserX, Eye, EyeOff, Globe } from 'lucide-react';
+import { Plus, Edit2, Trash2, X, Search, Download, Lock, Loader2, Upload, FileText, Printer, Camera, UserCheck, UserX, Eye, EyeOff, Globe, Shield, ToggleLeft, ToggleRight, Check } from 'lucide-react';
 import { uploadFile, uploadImage, getImageUrl, API_BASE_URL } from '../lib/api';
 import { formatDateDMY } from '../lib/utils';
 import jsPDF from 'jspdf';
@@ -33,7 +34,17 @@ async function forceDownload(url: string, filename: string) {
 }
 
 export default function UsersPage() {
-  const { users, addUser, updateUser, deleteUser } = useCrmStore();
+  const { users, addUser, updateUser, deleteUser, roles, addAuditLog } = useCrmStore();
+
+  const availableRoles = useMemo(() => {
+    const dynamicRoles = (roles || []).filter(r => r.status === 'Active').map(r => r.roleName);
+    return Array.from(new Set([...ROLE_NAMES, ...dynamicRoles]));
+  }, [roles]);
+
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false);
+  const [selectedUserForPerms, setSelectedUserForPerms] = useState<typeof users[0] | null>(null);
+  const [userPermsList, setUserPermsList] = useState<string[]>([]);
+  const [savingUserPerms, setSavingUserPerms] = useState(false);
   const { currentUser, activeCompany, isMultiCompanyAdmin, getUserCompany } = useAuthStore();
   const [showModal, setShowModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -49,7 +60,7 @@ export default function UsersPage() {
   const [form, setForm] = useState({
     addedBy: 'Admin',
     name: '',
-    role: 'Agent',
+    role: 'Travel Consultant',
     email: '',
     phone: '',
     emergencyNumber: '',
@@ -77,6 +88,80 @@ export default function UsersPage() {
 
   // Check if current user can manage passwords
   const canManagePasswords = ['Admin', 'Supervisor', 'Manager', 'Operation Manager', 'HR (Human Resource)'].includes(currentUser?.role || '');
+
+  const canManagePermissions = ['admin', 'super admin', 'superuser', 'hr', 'hr (human resource)'].includes((currentUser?.role || '').toLowerCase()) ||
+    (currentUser?.permissions || []).includes('User Management');
+
+  const openManageUserPermissions = (u: typeof users[0]) => {
+    setSelectedUserForPerms(u);
+    if (u.permissions && Array.isArray(u.permissions) && u.permissions.length > 0) {
+      setUserPermsList([...u.permissions]);
+    } else {
+      const roleObj = (roles || []).find(r => r.roleName.toLowerCase() === (u.role || '').toLowerCase());
+      const rolePerms = roleObj && Array.isArray(roleObj.permissions) ? roleObj.permissions : [];
+      setUserPermsList([...rolePerms]);
+    }
+    setShowPermissionsModal(true);
+  };
+
+  const handleSaveUserPermissions = async () => {
+    if (!selectedUserForPerms) return;
+    setSavingUserPerms(true);
+    try {
+      const now = new Date().toLocaleString('en-IN');
+      const performedByName = `${currentUser?.name || 'Admin'} (${currentUser?.role || 'Admin'})`;
+      const performedRole = currentUser?.role || 'Admin';
+
+      const roleObj = (roles || []).find(r => r.roleName.toLowerCase() === (selectedUserForPerms.role || '').toLowerCase());
+      const rolePerms = roleObj && Array.isArray(roleObj.permissions) ? roleObj.permissions : [];
+
+      const oldPerms = (selectedUserForPerms.permissions && selectedUserForPerms.permissions.length > 0)
+        ? selectedUserForPerms.permissions
+        : rolePerms;
+      const addedPerms = userPermsList.filter(p => !oldPerms.includes(p));
+      const removedPerms = oldPerms.filter(p => !userPermsList.includes(p));
+
+      let details = `Updated permissions for user "${selectedUserForPerms.name}" (${selectedUserForPerms.role}). Total active: ${userPermsList.length}.`;
+      if (addedPerms.length > 0 || removedPerms.length > 0) {
+        const parts: string[] = [];
+        if (addedPerms.length > 0) parts.push(`Granted: [${addedPerms.join(', ')}]`);
+        if (removedPerms.length > 0) parts.push(`Revoked: [${removedPerms.join(', ')}]`);
+        details = parts.join('; ');
+      }
+
+      await updateUser(selectedUserForPerms.id, {
+        permissions: userPermsList,
+        modified: now
+      });
+
+      await addAuditLog({
+        timestamp: now,
+        action: 'User Permissions Modified',
+        performedBy: performedByName,
+        performedByRole: performedRole,
+        targetType: 'User',
+        targetId: String(selectedUserForPerms.id),
+        targetName: selectedUserForPerms.name,
+        details,
+        changes: JSON.stringify({ old: oldPerms, new: userPermsList, added: addedPerms, removed: removedPerms })
+      });
+
+      if (currentUser?.id === selectedUserForPerms.id) {
+        useAuthStore.setState({
+          currentUser: {
+            ...currentUser,
+            permissions: userPermsList
+          }
+        });
+      }
+
+      setShowPermissionsModal(false);
+    } catch (e: any) {
+      alert('Failed to update permissions: ' + (e?.message || 'Error'));
+    }
+    setSavingUserPerms(false);
+  };
+
 
   const isMultiAdmin = isMultiCompanyAdmin();
   const userCompany = getUserCompany();
@@ -109,7 +194,7 @@ export default function UsersPage() {
     setForm({
       addedBy: currentUser?.name || 'Admin',
       name: '',
-      role: 'Agent',
+      role: 'Travel Consultant',
       email: '',
       phone: '',
       emergencyNumber: '',
@@ -371,7 +456,7 @@ export default function UsersPage() {
           <input placeholder="Phone" value={filters.phone} onChange={(e) => setFilters(f => ({ ...f, phone: e.target.value }))} className="input-field" />
           <select value={filters.role} onChange={(e) => setFilters(f => ({ ...f, role: e.target.value }))} className="select-field">
             <option value="">All Roles</option>
-            {ROLE_NAMES.map(r => <option key={r}>{r}</option>)}
+            {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
           <select value={filters.gender} onChange={(e) => setFilters(f => ({ ...f, gender: e.target.value }))} className="select-field">
             <option value="">All Genders</option>
@@ -438,6 +523,11 @@ export default function UsersPage() {
                   <td className="table-cell">
                     <div className="flex items-center gap-1">
                       <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600" title="Edit"><Edit2 size={14} /></button>
+                      {canManagePermissions && (
+                        <button onClick={() => openManageUserPermissions(u)} className="p-1.5 rounded-lg hover:bg-purple-50 text-purple-600" title="Manage Custom Permissions">
+                          <Shield size={14} />
+                        </button>
+                      )}
                       {canManagePasswords && (
                         <button onClick={() => openChangePassword(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-amber-600" title="Change Password"><Lock size={14} /></button>
                       )}
@@ -533,7 +623,7 @@ export default function UsersPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Role *</label>
                   <select value={form.role} onChange={(e) => setForm(f => ({ ...f, role: e.target.value }))} className="select-field">
-                    {ROLE_NAMES.map(r => <option key={r}>{r}</option>)}
+                    {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                 </div>
               </div>

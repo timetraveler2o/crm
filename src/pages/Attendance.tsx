@@ -65,7 +65,7 @@ export default function Attendance() {
   }, [users, displayCompany]);
 
   const canEdit = currentUser ? (EDIT_ROLES.includes(currentUser.role)) : false;
-  const isAgent = currentUser?.role === 'Agent';
+  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(currentUser?.role || '');
   const canExport = currentUser?.permissions?.includes('Export Data') || ['Admin', 'Operation Manager', 'HR (Human Resource)'].includes(currentUser?.role || '');
   const canMarkAttendance = currentUser ? EDIT_ROLES.includes(currentUser.role) : false;
 

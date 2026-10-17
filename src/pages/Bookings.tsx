@@ -471,7 +471,7 @@ export default function Bookings() {
     // Role-based visibility: Agents only see own bookings by default
     // But can search/filter to find others by PNR, name, email, phone
     const role = currentUser?.role || '';
-    const isAgentRole = role === 'Agent';
+    const isAgentRole = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(role);
     const hasSearchFilter = filters.pnr || filters.firstName || filters.lastName || filters.email || filters.phone || filters.queryId;
     if (isAgentRole && b.addedBy !== currentUser?.name && !hasSearchFilter) return false;
 
@@ -1336,7 +1336,7 @@ export default function Bookings() {
   };
 
   // Only show agent-role users in the All Agents dropdown (exclude Admin, HR, IT, etc.)
-  const AGENT_ONLY_ROLES = ['Agent', 'Supervisor'];
+  const AGENT_ONLY_ROLES = ['Agent', 'Travel Consultant', 'Senior Travel Consultant', 'Supervisor'];
   // Filter agents by active company
   const baseAgentNames = [...new Set(
     users
@@ -1364,7 +1364,7 @@ export default function Bookings() {
   
   // Check if current user can edit this booking
   // Use originalQueryStatus (the saved DB status) so agents can still CHANGE TO locked statuses and save
-  const isAgent = currentUser?.role === 'Agent';
+  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(currentUser?.role || '');
   const isLockedForAgent = isAgent && ['Send to QC', 'Sold', 'Date Change', 'Schedule Change', 'Variance'].includes(originalQueryStatus);
   const canEditBooking = !isLockedForAgent;
   const isSupervisor = ['Supervisor', 'Manager', 'Admin', 'Operation Manager'].includes(userRole);

@@ -387,3 +387,18 @@ export const paymentAuthorizations = sqliteTable('payment_authorizations', {
   created: text('created'),
   modified: text('modified')
 });
+
+
+export const auditLogs = sqliteTable("audit_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  timestamp: text("timestamp").notNull(),
+  action: text("action").notNull(),
+  performedBy: text("performedBy").notNull(),
+  performedByRole: text("performedByRole").default(""),
+  targetType: text("targetType").notNull(),
+  targetId: text("targetId").default(""),
+  targetName: text("targetName").notNull(),
+  details: text("details").notNull(),
+  changes: text("changes").default(""),
+  created: text("created").notNull()
+});

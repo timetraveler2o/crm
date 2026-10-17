@@ -72,7 +72,7 @@ export default function SiteBookings() {
   }).sort((a, b) => sortBy === 'id_desc' ? b.id - a.id : a.id - b.id);
 
   const agents = users.filter(u => {
-    if (u.status !== 'Active' || !['Agent', 'Supervisor'].includes(u.role)) return false;
+    if (u.status !== 'Active' || !['Agent', 'Travel Consultant', 'Senior Travel Consultant', 'Supervisor'].includes(u.role)) return false;
     if (!u.company) return displayCompany === 'GSF';
     if (displayCompany === 'GSF') return u.company === 'Get Set Flight';
     if (displayCompany === 'LBT') return u.company === 'Look Book Ticket';

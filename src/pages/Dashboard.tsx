@@ -139,7 +139,7 @@ export default function Dashboard() {
     if (companyTargets.includes('All Travelo') && displayCompany === 'travelo') companyMatch = true;
     // Check role targeting
     let roleMatch = roleTargets.length === 0; // if no role targets, show to all
-    if (roleTargets.includes('Agent') && userRole === 'Agent') roleMatch = true;
+    if ((roleTargets.includes('Agent') || roleTargets.includes('Travel Consultant')) && ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(userRole)) roleMatch = true;
     if (roleTargets.includes('Supervisor') && userRole === 'Supervisor') roleMatch = true;
     if (roleTargets.includes('Manager') && (userRole === 'Manager' || userRole === 'Operation Manager')) roleMatch = true;
     if (roleTargets.includes('Admin') && (userRole === 'Admin' || userRole === 'Super Admin')) roleMatch = true;
@@ -199,7 +199,7 @@ export default function Dashboard() {
   });
 
   // Filter bookings based on role and company
-  const isAgent = currentUser?.role === 'Agent';
+  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(currentUser?.role || '');
   const companyBookings = safeBookings.filter(b => {
     if (!b.company) return displayCompany === 'GSF';
     if (displayCompany === 'GSF') return b.company === 'Get Set Flight';
@@ -226,7 +226,7 @@ export default function Dashboard() {
   // GPM Data: role-based
   const roleLower = (currentUser?.role || '').toLowerCase();
   const isGPMFullAccess = ['admin', 'super admin', 'superuser', 'operation manager', 'manager', 'hr (human resource)', 'hr', 'it (information tech)', 'it', 'supervisor'].includes(roleLower);
-  const isGPMAgent = roleLower === 'agent';
+  const isGPMAgent = ['agent', 'travel consultant', 'senior travel consultant'].includes(roleLower);
 
   const gpmBookings = useMemo(() => {
     const gpmStatuses = ['Sold', 'Send to QC', 'Variance', 'Date Change', 'Cancellation', 'Schedule Change'];

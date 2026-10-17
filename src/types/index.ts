@@ -27,6 +27,7 @@ export interface User {
   emergencyNumber?: string;
   currentAddress?: string;
   permanentAddress?: string;
+  permissions?: string[]; // Custom or overridden permissions
 }
 
 // Company definitions
@@ -58,6 +59,33 @@ export interface Role {
   created: string;
   modified: string;
 }
+
+
+export interface AuditLog {
+  id: number;
+  timestamp: string;
+  action: string;
+  performedBy: string;
+  performedByRole?: string;
+  targetType: 'Role' | 'User' | 'Permission';
+  targetId?: string;
+  targetName: string;
+  details: string;
+  changes?: string;
+  created: string;
+}
+
+export const STANDARD_ROLES = [
+  'Admin',
+  'Super Admin',
+  'Manager',
+  'Operation Manager',
+  'Supervisor',
+  'Senior Travel Consultant',
+  'Travel Consultant',
+  'HR',
+  'IT'
+] as const;
 
 export interface QueryStatus {
   id: number;
@@ -291,6 +319,7 @@ export const PERMISSIONS = [
   'Updates Management',
   'Site Bookings',
   'GPM Report',
+  'Payslip',
 ];
 
 export const QUERY_STATUSES = [
@@ -329,14 +358,17 @@ export const CABINS = ['Economy', 'Premium Economy', 'Business', 'First Class'] 
 
 export const ROLE_NAMES = [
   'Admin',
+  'Super Admin',
   'Operation Manager',
+  'Manager',
   'HR (Human Resource)',
-  'Agent',
   'Supervisor',
+  'Senior Travel Consultant',
+  'Travel Consultant',
+  'Agent',
   'Ticketing',
   'IT (Information Tech)',
   'Accountant',
-  'Manager',
 ];
 
 export const COMPANY_NAMES = ['Get Set Flight', 'Look Book Ticket', 'Traveloboom'] as const;

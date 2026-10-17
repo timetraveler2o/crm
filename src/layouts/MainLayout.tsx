@@ -31,16 +31,16 @@ const ROUTE_PERMISSION_MAP: Record<string, string | null> = {
   '/users': 'User Management',
   '/query-status': 'Query Status Management',
   '/bookings': 'Booking Management',
-  '/site-bookings': 'Booking Management',
+  '/site-bookings': 'Site Bookings',
   '/payment-authorizations': 'Payment Authorization',
   '/attendance': 'Attendance',
   '/productivity': 'Attendance',
-  '/break-monitor': 'Attendance',
+  '/break-monitor': 'Break Monitoring',
   '/reports': 'Reports',
   '/login-activity': 'Login Activity',
   '/ip-whitelist': 'IP Whitelist',
-  '/updates': null,
-  '/payslip': null,
+  '/updates': 'Updates Management',
+  '/payslip': 'Payslip',
 };
 
 const allNavItems = [
@@ -295,22 +295,30 @@ export default function MainLayout() {
   // Filter nav items based on user permissions
   const userPermissions = currentUser?.permissions || [];
   const roleLower = (currentUser?.role || '').toLowerCase();
-  const isFullAccess = roleLower === 'admin' || roleLower === 'super admin' || roleLower === 'superuser' || roleLower === 'manager' || roleLower === 'operation manager' || roleLower === 'hr (human resource)' || roleLower === 'hr' || roleLower === 'it (information tech)' || roleLower === 'it';
+  // ONLY Admin and Super Admin have unrestricted bypass access to all navigation
+  const isAdminOrSuper = roleLower === 'admin' || roleLower === 'super admin' || roleLower === 'superuser';
+  const isHr = roleLower === 'hr' || roleLower === 'hr (human resource)';
 
   const navItems = allNavItems.filter(item => {
-    const requiredPerm = ROUTE_PERMISSION_MAP[item.to];
-    const isAgentRole = roleLower === 'agent';
-    if (isAgentRole && ['/site-bookings', '/productivity'].includes(item.to)) return false;
-    
-    // Payment Authorization permission: Default for Admin, Super Admin, Manager. Lower roles (Supervisor, Agent) require explicit permission.
-    if (item.to === '/payment-authorizations') {
-      const isPaymentDefaultRole = ['admin', 'super admin', 'superuser', 'manager', 'operation manager'].includes(roleLower);
-      if (isPaymentDefaultRole) return true;
-      return userPermissions.includes('Payment Authorization');
-    }
+    // 1. Dashboard is always accessible
+    if (item.to === '/dashboard') return true;
 
+    // 2. Admin & Super Admin see all features
+    if (isAdminOrSuper) return true;
+
+    // 3. HR can manage Roles & Users
+    if (isHr && (item.to === '/roles' || item.to === '/users')) return true;
+
+    // 4. Strict permission check for every other page
+    const requiredPerm = ROUTE_PERMISSION_MAP[item.to];
     if (requiredPerm === null) return true;
-    if (isFullAccess) return true;
+
+    // Additional aliases
+    if (item.to === '/site-bookings' && (userPermissions.includes('Site Bookings') || userPermissions.includes('Booking Management'))) return true;
+    if (item.to === '/break-monitor' && (userPermissions.includes('Break Monitoring') || userPermissions.includes('Attendance'))) return true;
+    if (item.to === '/productivity' && (userPermissions.includes('Attendance') || userPermissions.includes('Reports') || userPermissions.includes('GPM Report'))) return true;
+    if (item.to === '/updates' && (userPermissions.includes('Updates Management') || userPermissions.includes('Notice Board'))) return true;
+
     return userPermissions.includes(requiredPerm);
   });
 

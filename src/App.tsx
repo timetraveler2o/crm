@@ -26,26 +26,34 @@ import PublicPayment from './pages/PublicPayment';
 // WhatsApp removed from CRM
 
 // Map permissions to route paths
-const PERMISSION_ROUTE_MAP: Record<string, string[]> = {
+export const PERMISSION_ROUTE_MAP: Record<string, string[]> = {
   'Role Management': ['/roles'],
   'User Management': ['/users'],
   'Query Status Management': ['/query-status'],
-  'Booking Management': ['/bookings', '/site-bookings', '/bookings/add', '/bookings/edit'],
+  'Booking Management': ['/bookings', '/bookings/add', '/bookings/edit'],
+  'Site Bookings': ['/site-bookings'],
   'Payment Authorization': ['/payment-authorizations'],
-  'Attendance': ['/attendance', '/break-monitor', '/productivity'],
-  'Payslip': ['/payslip'],
-  'Notice Board': ['/updates'],
+  'Attendance': ['/attendance'],
+  'Break Monitoring': ['/break-monitor'],
   'Reports': ['/reports'],
+  'GPM Report': ['/reports'],
   'Login Activity': ['/login-activity'],
   'IP Whitelist': ['/ip-whitelist'],
+  'Updates Management': ['/updates'],
+  'Payslip': ['/payslip'],
 };
 
-function hasPermissionForRoute(permissions: string[], path: string): boolean {
-  // Dashboard and Profile are always accessible
+export function hasPermissionForRoute(permissions: string[], path: string): boolean {
   if (path === '/dashboard' || path === '/profile') return true;
   
+  // Specific fallback checks
+  if (path === '/site-bookings' && (permissions.includes('Site Bookings') || permissions.includes('Booking Management'))) return true;
+  if (path === '/break-monitor' && (permissions.includes('Break Monitoring') || permissions.includes('Attendance'))) return true;
+  if (path === '/productivity' && (permissions.includes('Attendance') || permissions.includes('Reports') || permissions.includes('GPM Report'))) return true;
+  if (path === '/updates' && (permissions.includes('Updates Management') || permissions.includes('Notice Board'))) return true;
+
   for (const [perm, routes] of Object.entries(PERMISSION_ROUTE_MAP)) {
-    if (routes.includes(path) && permissions.includes(perm)) {
+    if (routes.some(r => path === r || path.startsWith(r + '/')) && permissions.includes(perm)) {
       return true;
     }
   }
@@ -66,15 +74,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PermissionRoute({ path, children }: { path: string; children: React.ReactNode }) {
   const { currentUser } = useAuthStore();
-  const permissions = currentUser?.permissions || [];
-  
-  // Admin/Super Admin/Manager/Operation Manager gets all access
   const roleLower = (currentUser?.role || '').toLowerCase();
-  const FULL_ACCESS_ROLES = ['admin', 'super admin', 'superuser', 'operation manager', 'manager', 'hr (human resource)', 'hr'];
-  if (FULL_ACCESS_ROLES.includes(roleLower)) {
+  
+  // ONLY Admin and Super Admin have unrestricted bypass access
+  const isSuperOrAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+  if (isSuperOrAdmin) {
+    return <>{children}</>;
+  }
+
+  // HR can manage Roles and Users by default
+  const isHr = ['hr', 'hr (human resource)'].includes(roleLower);
+  if (isHr && (path === '/roles' || path === '/users')) {
     return <>{children}</>;
   }
   
+  const permissions = currentUser?.permissions || [];
   if (!hasPermissionForRoute(permissions, path)) {
     return <Navigate to="/dashboard" replace />;
   }

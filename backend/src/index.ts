@@ -1081,7 +1081,10 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
 
   app.get('/api/public/users', async (c) => {
     const rawUsers = await db.select().from(tables.users);
-    const users = rawUsers.map(({ password: _, ...safeUser }) => safeUser);
+    const users = rawUsers.map(({ password: _, ...safeUser }) => ({
+      ...safeUser,
+      permissions: typeof safeUser.permissions === 'string' ? (() => { try { return JSON.parse(safeUser.permissions); } catch { return null; } })() : (safeUser.permissions || null)
+    }));
     return c.json({ data: users });
   });
 
@@ -1131,6 +1134,52 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     const id = Number(c.req.param('id'));
     await db.delete(tables.users).where(eq(tables.users.id, id));
     return c.json({ success: true });
+  });
+
+
+  // --- Audit Logs (Roles & Permissions Audit Trail) ---
+  app.get('/api/public/audit-logs', async (c) => {
+    try {
+      const logs = await db.select().from(tables.auditLogs).orderBy(desc(tables.auditLogs.id)).limit(300);
+      return c.json({ success: true, data: logs });
+    } catch (err: any) {
+      return c.json({ success: false, data: [] });
+    }
+  });
+
+  app.post('/api/public/audit-logs', async (c) => {
+    try {
+      const body = await c.req.json();
+      const now = formatDateTime();
+      const logData = {
+        timestamp: body.timestamp || now,
+        action: body.action || 'Action',
+        performedBy: body.performedBy || 'Admin',
+        performedByRole: body.performedByRole || 'Admin',
+        targetType: body.targetType || 'Role',
+        targetId: String(body.targetId || ''),
+        targetName: body.targetName || '',
+        details: body.details || '',
+        changes: typeof body.changes === 'string' ? body.changes : JSON.stringify(body.changes || {}),
+        created: now
+      };
+      const createdLog = await db.insert(tables.auditLogs).values(logData).returning();
+      const result = createdLog[0] || logData;
+
+      // Sync to Neon
+      fireAndForgetNeon(async () => {
+        await neonSql.query(
+          `INSERT INTO audit_logs (timestamp, action, "performedBy", "performedByRole", "targetType", "targetId", "targetName", details, changes, created)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [logData.timestamp, logData.action, logData.performedBy, logData.performedByRole, logData.targetType, logData.targetId, logData.targetName, logData.details, logData.changes, logData.created]
+        );
+      }, 'audit_log_sync');
+
+      return c.json({ success: true, data: result });
+    } catch (err: any) {
+      console.error('Audit log error:', err);
+      return c.json({ success: false, error: err.message }, 500);
+    }
   });
 
   // --- Roles ---

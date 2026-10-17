@@ -295,7 +295,9 @@ api.post('/public/login-verify-otp', async (c) => {
 
     let permissions: string[] = ['All'];
     try {
-      if (user.role) {
+      if (user.permissions) {
+        permissions = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions;
+      } else if (user.role) {
         const roleRows = await sql`SELECT * FROM roles WHERE LOWER("roleName") = LOWER(${user.role}) LIMIT 1`;
         if (roleRows[0]?.permissions) {
           permissions = typeof roleRows[0].permissions === 'string'
@@ -309,7 +311,8 @@ api.post('/public/login-verify-otp', async (c) => {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role || 'Agent',
+      role: user.role || 'Travel Consultant',
+      permissions: permissions,
       status: user.status || 'Active',
       company: user.company || 'Get Set Flight',
       image: user.image || '',
@@ -585,8 +588,12 @@ api.delete('/public/login-activity/all', async (c) => {
 api.get('/public/users', async (c) => {
   try {
     const sql = getDb();
-    const rows = await sql`SELECT id, "addedBy", image, name, role, email, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", created, modified FROM users ORDER BY id ASC`;
-    return c.json({ success: true, data: rows });
+    const rows = await sql`SELECT id, "addedBy", image, name, role, email, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified FROM users ORDER BY id ASC`;
+    const parsed = rows.map((r: any) => ({
+      ...r,
+      permissions: typeof r.permissions === 'string' ? (() => { try { return JSON.parse(r.permissions); } catch { return null; } })() : (r.permissions || null)
+    }));
+    return c.json({ success: true, data: parsed });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
@@ -598,15 +605,16 @@ api.post('/public/users', async (c) => {
     const sql = getDb();
     const now = getNowFormatted();
     const creds = typeof b.amadeusCreds === 'string' ? b.amadeusCreds : JSON.stringify(b.amadeusCreds || []);
+    const perms = b.permissions !== undefined ? (typeof b.permissions === 'string' ? b.permissions : JSON.stringify(b.permissions)) : null;
     const res = await sql`
-      INSERT INTO users ("addedBy", image, name, email, password, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", created, modified)
+      INSERT INTO users ("addedBy", image, name, email, password, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified)
       VALUES (
         ${b.addedBy || 'Admin'},
         ${b.image || ''},
         ${b.name},
         ${b.email},
         ${b.password || 'User@12345'},
-        ${b.role || 'Agent'},
+        ${b.role || 'Travel Consultant'},
         ${b.phone || ''},
         ${b.gender || ''},
         ${b.status || 'Active'},
@@ -615,12 +623,17 @@ api.post('/public/users', async (c) => {
         ${b.currentAddress || ''},
         ${b.permanentAddress || ''},
         ${creds},
+        ${perms},
         ${now},
         ${now}
       )
-      RETURNING id, "addedBy", image, name, email, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", created, modified
+      RETURNING id, "addedBy", image, name, email, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified
     `;
-    return c.json({ success: true, data: res[0] });
+    const r = res[0];
+    if (r && typeof r.permissions === 'string') {
+      try { r.permissions = JSON.parse(r.permissions); } catch {}
+    }
+    return c.json({ success: true, data: r });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
@@ -651,9 +664,10 @@ api.put('/public/users/:id', async (c) => {
             "currentAddress" = COALESCE(${b.currentAddress}, "currentAddress"),
             "permanentAddress" = COALESCE(${b.permanentAddress}, "permanentAddress"),
             "amadeusCreds" = COALESCE(${creds}, "amadeusCreds"),
+            permissions = CASE WHEN ${b.permissions !== undefined} THEN ${b.permissions !== undefined ? (typeof b.permissions === 'string' ? b.permissions : JSON.stringify(b.permissions)) : null} ELSE permissions END,
             modified = ${now}
         WHERE id = ${id}
-        RETURNING id, "addedBy", image, name, email, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", created, modified
+        RETURNING id, "addedBy", image, name, email, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified
       `;
     } else {
       res = await sql`
@@ -670,9 +684,10 @@ api.put('/public/users/:id', async (c) => {
             "currentAddress" = COALESCE(${b.currentAddress}, "currentAddress"),
             "permanentAddress" = COALESCE(${b.permanentAddress}, "permanentAddress"),
             "amadeusCreds" = COALESCE(${creds}, "amadeusCreds"),
+            permissions = CASE WHEN ${b.permissions !== undefined} THEN ${b.permissions !== undefined ? (typeof b.permissions === 'string' ? b.permissions : JSON.stringify(b.permissions)) : null} ELSE permissions END,
             modified = ${now}
         WHERE id = ${id}
-        RETURNING id, "addedBy", image, name, email, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", created, modified
+        RETURNING id, "addedBy", image, name, email, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified
       `;
     }
     return c.json({ success: true, data: res[0] });
@@ -766,6 +781,47 @@ api.delete('/public/roles/:id', async (c) => {
     return c.json({ success: false, error: err.message }, 500);
   }
 });
+
+// ========================================================
+// 5.1 AUDIT LOGS (ROLES & PERMISSIONS AUDIT TRAIL)
+// ========================================================
+api.get('/public/audit-logs', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300`;
+    return c.json({ success: true, data: rows });
+  } catch (err: any) {
+    return c.json({ success: false, data: [] });
+  }
+});
+
+api.post('/public/audit-logs', async (c) => {
+  try {
+    const b = await c.req.json();
+    const sql = getDb();
+    const now = getNowFormatted();
+    const res = await sql`
+      INSERT INTO audit_logs (timestamp, action, "performedBy", "performedByRole", "targetType", "targetId", "targetName", details, changes, created)
+      VALUES (
+        ${b.timestamp || now},
+        ${b.action},
+        ${b.performedBy || 'Admin'},
+        ${b.performedByRole || 'Admin'},
+        ${b.targetType || 'Role'},
+        ${String(b.targetId || '')},
+        ${b.targetName || ''},
+        ${b.details || ''},
+        ${typeof b.changes === 'string' ? b.changes : JSON.stringify(b.changes || {})},
+        ${now}
+      )
+      RETURNING *
+    `;
+    return c.json({ success: true, data: res[0] });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
 
 // ========================================================
 // 6. UNIVERSAL WEBHOOK LEAD & PAYMENT CAPTURE
