@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useCrmStore } from '../store/crmStore';
 import { ROLE_NAMES, PERMISSIONS } from '../types';
 import { PERMISSION_GROUPS } from './Roles';

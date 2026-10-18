@@ -108,7 +108,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
     };
 
     try {
-      const [users, roles, bookings, sheet, balances, qs, sb, att] = await Promise.all([
+      const [users, roles, bookings, sheet, balances, qs, sb, att, auditRes] = await Promise.all([
         safeJson(client.api.fetch('/api/public/users')),
         safeJson(client.api.fetch('/api/public/roles')),
         safeJson(client.api.fetch('/api/public/bookings')),
