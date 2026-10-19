@@ -3,7 +3,7 @@ import { useCrmStore } from '../store/crmStore';
 import { useAuthStore } from '../store/authStore';
 import { PERMISSIONS, Role } from '../types';
 import { 
-  Plus, Edit2, Trash2, X, Shield, ToggleLeft, ToggleRight, Save, 
+  Plus, KeyRound, Edit2, Trash2, X, Shield, ToggleLeft, ToggleRight, Save, 
   Loader2, CheckCircle, AlertCircle, History, Search, Filter, 
   Layers, Users, Check, Clock, UserCheck
 } from 'lucide-react';
@@ -40,7 +40,7 @@ export const PERMISSION_GROUPS: { label: string; color: string; permissions: str
 ];
 
 export default function Roles() {
-  const { roles, addRole, updateRole, deleteRole, users, auditLogs, fetchAuditLogs, addAuditLog } = useCrmStore();
+  const { roles, addRole, updateRole, deleteRole, users, auditLogs, fetchAuditLogs, addAuditLog, systemSettings, updateSystemSetting } = useCrmStore();
   const { currentUser } = useAuthStore();
   const savedFilters = useRef(loadPageFilters<any>('roles')).current;
   
@@ -117,8 +117,41 @@ export default function Roles() {
     });
   }, [auditLogs, auditTypeFilter, auditSearch]);
 
-  const canManageRoles = ['admin', 'super admin', 'superuser', 'hr', 'hr (human resource)'].includes((currentUser?.role || '').toLowerCase()) ||
+  // Role & Master Admin Permission Checks
+  const isMasterAdmin = ['admin', 'super admin', 'superuser'].includes((currentUser?.role || '').toLowerCase());
+  const canManageRoles = isMasterAdmin || ['hr', 'hr (human resource)'].includes((currentUser?.role || '').toLowerCase()) ||
     (currentUser?.permissions || []).includes('Role Management');
+
+  // 2FA OTP Toggle Settings (Admin Only)
+  const isOtpEnabled = systemSettings?.login_otp_enabled !== 'false';
+  const [togglingOtp, setTogglingOtp] = useState(false);
+
+  const handleToggleLoginOtp = async () => {
+    if (!isMasterAdmin) return;
+    try {
+      setTogglingOtp(true);
+      const nextVal = isOtpEnabled ? 'false' : 'true';
+      await updateSystemSetting('login_otp_enabled', nextVal);
+      addAuditLog({
+        action: nextVal === 'true' ? 'Enable Login OTP 2FA' : 'Disable Login OTP 2FA',
+        performedBy: currentUser?.name || 'Admin',
+        performedByRole: currentUser?.role || 'Admin',
+        targetType: 'Role',
+        targetName: 'System Security Settings',
+        details: `Admin changed Login 2FA OTP verification to ${nextVal === 'true' ? 'REQUIRED (ON)' : 'OPTIONAL (OFF - Direct Password Login)'}.`
+      });
+      setToast({
+        type: 'success',
+        message: nextVal === 'true' 
+          ? 'Login 2FA OTP Enabled: All users must verify a 6-digit OTP when logging in.' 
+          : 'Login 2FA OTP Disabled: Users can now log in directly with their password!'
+      });
+    } catch (err: any) {
+      setToast({ type: 'error', message: err?.message || 'Failed to update 2FA OTP setting' });
+    } finally {
+      setTogglingOtp(false);
+    }
+  };
 
   const openAdd = () => {
     setEditId(null);
@@ -460,7 +493,7 @@ export default function Roles() {
                 <tbody className="divide-y divide-gray-100">
                   {filteredRoles.slice((currentPage - 1) * perPage, currentPage * perPage).map((r, idx) => {
                     const perms = Array.isArray(r.permissions) ? r.permissions : [];
-                    const isMasterAdmin = ['admin', 'super admin'].includes(r.roleName.toLowerCase());
+                    const isRoleAdmin = ['admin', 'super admin'].includes(r.roleName.toLowerCase());
                     const isSeniorConsultant = r.roleName.toLowerCase().includes('sr. travel') || r.roleName.toLowerCase().includes('senior travel');
                     const isConsultant = r.roleName.toLowerCase().includes('travel executive') || r.roleName.toLowerCase().includes('travel consultant') || r.roleName.toLowerCase() === 'agent';
                     
@@ -470,7 +503,7 @@ export default function Roles() {
                         <td className="table-cell font-bold text-gray-900">
                           <div className="flex items-center gap-2">
                             <span>{r.roleName}</span>
-                            {isMasterAdmin && (
+                            {isRoleAdmin && (
                               <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold uppercase">Super Access</span>
                             )}
                             {isSeniorConsultant && (
@@ -520,7 +553,7 @@ export default function Roles() {
                                 <Edit2 size={16} />
                               </button>
                             )}
-                            {canManageRoles && !isMasterAdmin && (
+                            {canManageRoles && !isRoleAdmin && (
                               <button 
                                 onClick={() => setConfirmDeleteId(r.id)} 
                                 className="p-1.5 rounded-lg hover:bg-red-50 text-red-500 transition-colors" 
