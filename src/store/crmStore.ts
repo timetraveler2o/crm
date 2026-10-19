@@ -82,6 +82,7 @@ interface CrmState {
 export const useCrmStore = create<CrmState>()(persist((set, get) => ({
   roles: [],
   auditLogs: [],
+  systemSettings: { login_otp_enabled: 'true' },
   users: [],
   queryStatuses: [],
   bookings: [],
@@ -94,6 +95,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
   activeBreak: null,
 
   fetchData: async () => {
+    get().fetchSystemSettings();
     set({ isLoading: true, error: null });
     const safeJson = async (p: Promise<Response>) => {
       try {
@@ -221,6 +223,36 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
     }
   },
 
+
+  
+  fetchSystemSettings: async () => {
+    try {
+      const res = await client.api.fetch('/api/public/system-settings');
+      if (res.ok) {
+        const d = await res.json();
+        set({ systemSettings: d.data || { login_otp_enabled: 'true' } });
+      }
+    } catch (e) {
+      console.warn('Failed to fetch system settings:', e);
+    }
+  },
+
+  updateSystemSetting: async (key: string, value: string) => {
+    try {
+      const currentUser = useAuthStore.getState().currentUser;
+      const res = await client.api.fetch('/api/public/system-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value, updatedBy: currentUser?.name || 'Admin' }),
+      });
+      if (res.ok) {
+        set((s) => ({ systemSettings: { ...s.systemSettings, [key]: value } }));
+      }
+    } catch (e) {
+      console.error('Failed to update system setting:', e);
+      throw e;
+    }
+  },
 
   fetchAuditLogs: async () => {
     try {

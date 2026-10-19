@@ -93,6 +93,34 @@ export const useAuthStore = create<AuthState>()(
             return { success: false, message: data.message || 'Invalid email or password' };
           }
 
+          // Direct login if OTP disabled by Admin
+          if (!data.requiresOtp && data.user) {
+            const userCompany = getCompanyFromEmail(data.user.email);
+            set({
+              isAuthenticated: true,
+              isChecking: false,
+              currentUser: data.user,
+              activeCompany: userCompany,
+              loginTimestamp: Date.now(),
+            });
+
+            try {
+              const deviceInfo = navigator.userAgent.includes('Mobile') ? 'Mobile' : 'Desktop';
+              client.api.fetch('/api/public/login-activity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  userId: data.user.id,
+                  userName: data.user.name,
+                  device: deviceInfo,
+                  status: 'Success (Password Auth)',
+                }),
+              }).catch(() => {});
+            } catch {}
+
+            return { success: true, requiresOtp: false, user: data.user, message: 'Login successful' };
+          }
+
           return { success: true, requiresOtp: true, message: data.message, fallbackOtp: data.fallbackOtp, emailSent: data.emailSent };
         } catch (err: any) {
           set({ isChecking: false });

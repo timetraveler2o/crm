@@ -95,13 +95,18 @@ export default function Login() {
 
     try {
       const result = await loginRequest(email.trim(), password);
-      if (result.success && result.requiresOtp) {
-        setLoginStep('otp');
-        setLoginOtp('');
-        setLoginOtpTimer(60);
-        setOtpSentMsg(result.message || `A 6-digit verification code has been sent to ${email.trim()}`);
-        if (result.fallbackOtp) {
-          setFallbackOtp(result.fallbackOtp);
+      if (result.success) {
+        if (result.requiresOtp) {
+          setLoginStep('otp');
+          setLoginOtp('');
+          setLoginOtpTimer(60);
+          setOtpSentMsg(result.message || `A 6-digit verification code has been sent to ${email.trim()}`);
+          if (result.fallbackOtp) {
+            setFallbackOtp(result.fallbackOtp);
+          }
+        } else {
+          // Direct login (OTP disabled by Admin)
+          navigate('/dashboard');
         }
       } else {
         setError(result.message || 'Invalid email or password. Please verify your credentials.');

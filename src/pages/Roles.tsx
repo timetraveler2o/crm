@@ -332,6 +332,70 @@ export default function Roles() {
         </div>
       </div>
 
+      
+      {/* 2FA Login OTP Security Control (Admin only) */}
+      {isMasterAdmin && (
+        <div className={`p-4 sm:p-5 rounded-2xl border transition-all ${
+          isOtpEnabled 
+            ? 'bg-gradient-to-r from-blue-50/80 to-indigo-50/80 border-blue-200' 
+            : 'bg-gradient-to-r from-amber-50/80 to-orange-50/80 border-amber-200'
+        } shadow-xs`}>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                isOtpEnabled ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'bg-amber-600 text-white shadow-md shadow-amber-500/20'
+              }`}>
+                <KeyRound size={22} />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-bold text-gray-900 text-base">Login Two-Factor Authentication (2FA OTP)</h3>
+                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                    isOtpEnabled ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
+                  }`}>
+                    {isOtpEnabled ? '● 2FA Active (OTP Required)' : '○ Disabled (Direct Password Login)'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {isOtpEnabled 
+                    ? 'All users must verify a 6-digit OTP sent to their email when logging in.' 
+                    : 'OTP is currently OFF. Users sign in instantly with their email and password without waiting for an email code.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              <button
+                type="button"
+                onClick={handleToggleLoginOtp}
+                disabled={togglingOtp}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 ${
+                  isOtpEnabled 
+                    ? 'bg-white text-rose-600 border border-rose-300 hover:bg-rose-50' 
+                    : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-600/25'
+                }`}
+              >
+                {togglingOtp ? (
+                  <>
+                    <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    Updating...
+                  </>
+                ) : isOtpEnabled ? (
+                  <>
+                    <span>Turn OFF Login OTP</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={14} />
+                    <span>Turn ON Login OTP</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex border-b border-gray-200 gap-4">
         <button

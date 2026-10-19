@@ -179,6 +179,59 @@ api.post('/public/login-request', async (c) => {
       return c.json({ success: false, message: 'Account is inactive. Contact administrator.' }, 403);
     }
 
+    // Check if 2FA OTP is required globally or for this user
+    let otpRequired = true;
+    try {
+      const settingRows = await sql`SELECT value FROM system_settings WHERE key = 'login_otp_enabled' LIMIT 1`;
+      if (settingRows.length > 0 && settingRows[0].value === 'false') {
+        otpRequired = false;
+      }
+      if (user.otp_enabled === false) {
+        otpRequired = false;
+      }
+    } catch (e) {
+      console.warn('Could not read login_otp_enabled setting:', e);
+    }
+
+    // Direct Login without OTP if disabled by Admin
+    if (!otpRequired) {
+      let userPerms: string[] = [];
+      if (user.permissions) {
+        try {
+          userPerms = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions;
+        } catch {
+          userPerms = [];
+        }
+      } else if (user.role) {
+        try {
+          const roleRows = await sql`SELECT permissions FROM roles WHERE "roleName" = ${user.role} LIMIT 1`;
+          if (roleRows.length > 0 && roleRows[0].permissions) {
+            userPerms = typeof roleRows[0].permissions === 'string' ? JSON.parse(roleRows[0].permissions) : roleRows[0].permissions;
+          }
+        } catch {}
+      }
+
+      const safeUser = {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        gender: user.gender,
+        phone: user.phone,
+        company: user.company,
+        status: user.status,
+        permissions: userPerms,
+        otpEnabled: false,
+      };
+
+      return c.json({
+        success: true,
+        requiresOtp: false,
+        message: 'Login successful',
+        user: safeUser
+      });
+    }
+
     // Generate 6-digit numeric OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expires = Date.now() + 10 * 60 * 1000; // 10 min in ms
