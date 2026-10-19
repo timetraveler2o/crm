@@ -44,7 +44,7 @@ export default function Profile() {
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
 
-  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(currentUser?.role || '');
+  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant', 'Travel Executive', 'Sr. Travel Executive'].includes(currentUser?.role || '');
   const canEditProfile = !isAgent || currentUser?.permissions?.includes('Profile Edit');
 
   // Keep amadeusCreds in sync with store — but ONLY when NOT editing

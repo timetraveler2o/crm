@@ -38,7 +38,7 @@ export default function UsersPage() {
 
   const availableRoles = useMemo(() => {
     const dynamicRoles = (roles || []).filter(r => r.status === 'Active').map(r => r.roleName);
-    return Array.from(new Set([...ROLE_NAMES, ...dynamicRoles]));
+    return Array.from(new Set(['Admin', 'Super Admin', ...dynamicRoles]));
   }, [roles]);
 
   const [showPermissionsModal, setShowPermissionsModal] = useState(false);

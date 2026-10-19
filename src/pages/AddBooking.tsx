@@ -754,7 +754,7 @@ export default function AddBooking() {
   const showPnrSection = true; // Always allow PNR details for all queries
   const showImageSection = true; // Always allow attaching images and documents for all query types
 
-  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(currentUser?.role || '');
+  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant', 'Travel Executive', 'Sr. Travel Executive'].includes(currentUser?.role || '');
   const isSupervisorOrAbove = ['Supervisor', 'Manager', 'Admin', 'Operation Manager'].includes(currentUser?.role || '');
   // originalQueryStatus = the SAVED status from db (what it was when page loaded)
   const [originalQueryStatus, setOriginalQueryStatus] = useState<string>('');

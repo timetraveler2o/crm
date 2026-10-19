@@ -33,7 +33,9 @@ export default function Reports() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
 
-  const canExport = currentUser?.permissions?.includes('Export Data') || ['Admin', 'Manager', 'Operation Manager', 'HR (Human Resource)'].includes(currentUser?.role || '');
+  const roleLower = (currentUser?.role || '').toLowerCase();
+  const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+  const canExport = isAdmin || currentUser?.permissions?.includes('Export Data') || ['Manager', 'Operation Manager', 'HR (Human Resource)', 'HR'].includes(currentUser?.role || '');
 
   const isMultiAdmin = isMultiCompanyAdmin();
   const userCompany = getUserCompany();

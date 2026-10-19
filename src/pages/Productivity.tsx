@@ -53,7 +53,9 @@ export default function Productivity() {
   // Role-based access: Daily Log only for HR/Admin
   const userRole = currentUser?.role || '';
   const canViewLogs = ['Admin', 'HR (Human Resource)'].includes(userRole);
-  const canExport = currentUser?.permissions?.includes('Export Data') || ['Admin', 'Manager', 'Operation Manager', 'HR (Human Resource)'].includes(userRole);
+  const roleLower = (userRole || '').toLowerCase();
+  const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+  const canExport = isAdmin || currentUser?.permissions?.includes('Export Data') || ['Manager', 'Operation Manager', 'HR (Human Resource)', 'HR'].includes(userRole);
 
   // Visible tabs based on role
   const visibleTabs = useMemo(() => {

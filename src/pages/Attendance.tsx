@@ -7,8 +7,8 @@ import { useState, useMemo, useCallback, useRef } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const EDIT_ROLES = ['Admin', 'HR (Human Resource)'];
-const STAFF_ROLES = ['Admin', 'HR (Human Resource)', 'IT (Information Tech)', 'Manager', 'Supervisor', 'Operation Manager', 'Ticketing', 'Accountant'];
+const EDIT_ROLES = ['Admin', 'Super Admin', 'HR', 'HR (Human Resource)'];
+const STAFF_ROLES = ['Admin', 'Super Admin', 'HR', 'HR (Human Resource)', 'IT (Information Tech)', 'Manager', 'Supervisor', 'Operation Manager', 'Ticketing', 'Accountant'];
 const OWNER_NAME = 'Ramit';
 
 const formatLogDateTime = () => {
@@ -64,10 +64,12 @@ export default function Attendance() {
     });
   }, [users, displayCompany]);
 
-  const canEdit = currentUser ? (EDIT_ROLES.includes(currentUser.role)) : false;
-  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(currentUser?.role || '');
-  const canExport = currentUser?.permissions?.includes('Export Data') || ['Admin', 'Operation Manager', 'HR (Human Resource)'].includes(currentUser?.role || '');
-  const canMarkAttendance = currentUser ? EDIT_ROLES.includes(currentUser.role) : false;
+  const roleLower = (currentUser?.role || '').toLowerCase();
+  const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+  const canEdit = currentUser ? (isAdmin || EDIT_ROLES.includes(currentUser.role)) : false;
+  const isAgent = ['travel executive', 'sr. travel executive', 'agent', 'travel consultant', 'senior travel consultant'].includes(roleLower);
+  const canExport = isAdmin || currentUser?.permissions?.includes('Export Data') || ['Admin', 'Operation Manager', 'HR (Human Resource)', 'HR'].includes(currentUser?.role || '');
+  const canMarkAttendance = canEdit;
 
   const [activeTab, setActiveTab] = useState<TabType>('attendance');
   const [year, setYear] = useState(() => new Date().getFullYear());

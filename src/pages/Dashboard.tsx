@@ -199,7 +199,7 @@ export default function Dashboard() {
   });
 
   // Filter bookings based on role and company
-  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant'].includes(currentUser?.role || '');
+  const isAgent = ['Agent', 'Travel Consultant', 'Senior Travel Consultant', 'Travel Executive', 'Sr. Travel Executive'].includes(currentUser?.role || '');
   const companyBookings = safeBookings.filter(b => {
     if (!b.company) return displayCompany === 'GSF';
     if (displayCompany === 'GSF') return b.company === 'Get Set Flight';
@@ -226,7 +226,7 @@ export default function Dashboard() {
   // GPM Data: role-based
   const roleLower = (currentUser?.role || '').toLowerCase();
   const isGPMFullAccess = ['admin', 'super admin', 'superuser', 'operation manager', 'manager', 'hr (human resource)', 'hr', 'it (information tech)', 'it', 'supervisor'].includes(roleLower);
-  const isGPMAgent = ['agent', 'travel consultant', 'senior travel consultant'].includes(roleLower);
+  const isGPMAgent = ['agent', 'travel consultant', 'senior travel consultant', 'travel executive', 'sr. travel executive'].includes(roleLower);
 
   const gpmBookings = useMemo(() => {
     const gpmStatuses = ['Sold', 'Send to QC', 'Variance', 'Date Change', 'Cancellation', 'Schedule Change'];
@@ -476,7 +476,7 @@ export default function Dashboard() {
           <p className="text-3xl font-bold">{conversionRate}%</p>
           <p className="text-xs opacity-80 mt-1">Conversion</p>
         </div>
-        {['Admin', 'Manager', 'HR', 'HR (Human Resource)', 'Operation Manager'].includes(currentUser?.role || '') ? (
+        {['Admin', 'Super Admin', 'Manager', 'HR', 'HR (Human Resource)', 'Operation Manager'].includes(currentUser?.role || '') ? (
           <div className="card p-4 bg-gradient-to-br from-purple-500 to-purple-700 text-white border-0 shadow-lg hover:shadow-xl transition-all cursor-pointer hover:-translate-y-0.5" onClick={() => navigate('/users')}>
             <div className="flex items-center justify-between mb-2">
               <Users size={18} className="opacity-80" />

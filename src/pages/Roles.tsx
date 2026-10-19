@@ -397,8 +397,8 @@ export default function Roles() {
                   {filteredRoles.slice((currentPage - 1) * perPage, currentPage * perPage).map((r, idx) => {
                     const perms = Array.isArray(r.permissions) ? r.permissions : [];
                     const isMasterAdmin = ['admin', 'super admin'].includes(r.roleName.toLowerCase());
-                    const isSeniorConsultant = r.roleName.toLowerCase().includes('senior travel');
-                    const isConsultant = r.roleName.toLowerCase().includes('travel consultant') || r.roleName.toLowerCase() === 'agent';
+                    const isSeniorConsultant = r.roleName.toLowerCase().includes('sr. travel') || r.roleName.toLowerCase().includes('senior travel');
+                    const isConsultant = r.roleName.toLowerCase().includes('travel executive') || r.roleName.toLowerCase().includes('travel consultant') || r.roleName.toLowerCase() === 'agent';
                     
                     return (
                       <tr key={r.id} className="hover:bg-blue-50/20 transition-colors">
@@ -590,7 +590,7 @@ export default function Roles() {
                     value={form.roleName} 
                     onChange={e => setForm(f => ({ ...f, roleName: e.target.value }))} 
                     className="input-field" 
-                    placeholder="e.g. Senior Travel Consultant, Operations Lead..." 
+                    placeholder="e.g. Travel Executive, Sr. Travel Executive, Operations..." 
                   />
                 </div>
                 <div>

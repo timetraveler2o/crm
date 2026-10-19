@@ -44,8 +44,10 @@ export default function LoginActivity() {
 
   const companyUserIds = useMemo(() => new Set(companyUsers.map(u => u.id)), [companyUsers]);
 
-  const canExport = currentUser?.permissions?.includes('Export Data') || ['Admin', 'Manager', 'Operation Manager', 'HR (Human Resource)'].includes(currentUser?.role || '');
-  const canDelete = ['Admin', 'Manager', 'IT'].includes(currentUser?.role || '');
+  const roleLower = (currentUser?.role || '').toLowerCase();
+  const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+  const canExport = isAdmin || currentUser?.permissions?.includes('Export Data') || ['Manager', 'Operation Manager', 'HR (Human Resource)', 'HR'].includes(currentUser?.role || '');
+  const canDelete = isAdmin || ['Manager', 'IT'].includes(currentUser?.role || '');
 
   // Apply all filters to logs
   const filteredLogs = useMemo(() => {

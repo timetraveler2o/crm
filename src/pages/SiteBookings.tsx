@@ -79,10 +79,12 @@ export default function SiteBookings() {
     if (displayCompany === 'travelo') return u.company === 'Traveloboom' || u.company === 'Traveloboom';
     return false;
   }).map(u => u.name);
-  const canExport = currentUser?.permissions?.includes('Export Data') || ['Admin', 'Manager', 'Operation Manager', 'HR (Human Resource)'].includes(currentUser?.role || '');
-  const canView = currentUser?.permissions?.includes('Booking Management') || ['Admin', 'Manager', 'Operation Manager', 'HR (Human Resource)', 'Supervisor'].includes(currentUser?.role || '');
-  const canEdit = ['Admin', 'Manager', 'Operation Manager', 'HR (Human Resource)', 'Supervisor'].includes(currentUser?.role || '');
-  const canDelete = ['Admin', 'HR (Human Resource)', 'IT', 'IT (Information Tech)'].includes(currentUser?.role || '');
+  const roleLower = (currentUser?.role || '').toLowerCase();
+  const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+  const canExport = isAdmin || currentUser?.permissions?.includes('Export Data') || ['Manager', 'Operation Manager', 'HR (Human Resource)', 'HR'].includes(currentUser?.role || '');
+  const canView = isAdmin || currentUser?.permissions?.includes('Booking Management') || ['Manager', 'Operation Manager', 'HR (Human Resource)', 'HR', 'Supervisor'].includes(currentUser?.role || '');
+  const canEdit = isAdmin || ['Manager', 'Operation Manager', 'HR (Human Resource)', 'HR', 'Supervisor'].includes(currentUser?.role || '');
+  const canDelete = isAdmin || ['HR (Human Resource)', 'HR', 'IT', 'IT (Information Tech)'].includes(currentUser?.role || '');
 
   if (!canView) {
     return (<div className="flex flex-col items-center justify-center h-64 text-gray-500"><p>You do not have permission to view site bookings.</p></div>);

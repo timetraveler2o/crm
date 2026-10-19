@@ -156,7 +156,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       if (currentUser && currentBookings.length > 0) {
         const roleLower = (currentUser.role || '').toLowerCase();
         const isSupervisor = ['admin', 'super admin', 'superuser', 'operation manager', 'manager', 'supervisor'].includes(roleLower);
-        const isAgent = ['agent', 'travel consultant', 'senior travel consultant'].includes(roleLower);
+        const isAgent = ['agent', 'travel consultant', 'senior travel consultant', 'travel executive', 'sr. travel executive'].includes(roleLower);
 
         newBookingsData.forEach((nb: any) => {
           const ob = currentBookings.find((c: any) => c.id === nb.id);

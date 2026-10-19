@@ -239,7 +239,7 @@ export default function BreakMonitor() {
       type: 'warning'
     });
     // Send email ONLY to Supervisors, Managers, and HR — not to the agent
-    const supervisorRoles = ['Supervisor', 'Manager', 'Operation Manager', 'Admin', 'HR (Human Resource)'];
+    const supervisorRoles = ['Supervisor', 'Manager', 'Operation Manager', 'Admin', 'Super Admin', 'HR', 'HR (Human Resource)'];
     const supervisors = companyUsers.filter(u => supervisorRoles.includes(u.role) && u.status === 'Active' && u.id !== currentUser.id);
     const supervisorEmails = supervisors.map(s => s.email).filter(Boolean);
     if (supervisorEmails.length === 0) return;
@@ -384,8 +384,10 @@ export default function BreakMonitor() {
     }
   };
 
-  const canViewAll = ['Admin', 'Manager', 'HR', 'HR (Human Resource)', 'IT', 'IT (Information Tech)', 'Operation Manager', 'Supervisor'].includes(currentUser?.role || '') || (currentUser?.permissions || []).includes('View All Breaks');
-  const canDelete = ['Admin', 'HR (Human Resource)', 'IT', 'IT (Information Tech)'].includes(currentUser?.role || '');
+  const roleLower = (currentUser?.role || '').toLowerCase();
+  const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+  const canViewAll = isAdmin || ['Admin', 'Super Admin', 'Manager', 'HR', 'HR (Human Resource)', 'IT', 'IT (Information Tech)', 'Operation Manager', 'Supervisor'].includes(currentUser?.role || '') || (currentUser?.permissions || []).includes('View All Breaks');
+  const canDelete = isAdmin || ['Admin', 'Super Admin', 'HR', 'HR (Human Resource)', 'IT', 'IT (Information Tech)'].includes(currentUser?.role || '');
   const visibleLogs = useMemo(() => {
     let logs = canViewAll ? filteredLogs : filteredLogs.filter(l => l.userId === currentUser?.id);
     if (agentFilter) {
@@ -513,7 +515,7 @@ export default function BreakMonitor() {
 
     // Build final report
     const report = companyUsers
-      .filter(u => u.status === 'Active' && (u.role?.includes('Agent') || u.role === 'Agent' || ['Travel Consultant', 'Sales Executive', 'Telecaller'].includes(u.role || '') || userBreakMap[u.id]))
+      .filter(u => u.status === 'Active' && (u.role?.includes('Agent') || u.role === 'Agent' || ['Travel Executive', 'Sr. Travel Executive', 'Travel Consultant', 'Senior Travel Consultant', 'Sales Executive', 'Telecaller'].includes(u.role || '') || userBreakMap[u.id]))
       .map(u => {
         const breakData = userBreakMap[u.id] || { breakCount: 0, totalBreakSec: 0, breaks: [] };
         const attendance = loginMap[u.id] || { loginTime: '-', logoutTime: '-', totalHours: '0h 0m', daysActive: 0 };

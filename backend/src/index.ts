@@ -85,7 +85,7 @@ async function forwardToExternalWebhook(event: string, payload: any) {
 // Brevo (Sendinblue) API & SMTP Configuration
 const BREVO_API_KEY = process.env.BREVO_API_KEY || "";
 const BREVO_SMTP_USER = process.env.BREVO_SMTP_USER || "bd8af4001@smtp-brevo.com";
-const BREVO_SMTP_KEY = process.env.BREVO_SMTP_KEY || process.env.SMTP_PASSWORD || BREVO_API_KEY;
+const BREVO_SMTP_KEY = process.env.BREVO_SMTP_PASS || process.env.BREVO_SMTP_KEY || process.env.SMTP_PASSWORD || BREVO_API_KEY;
 const BREVO_SENDER = { name: "Get Set Flight", email: process.env.BREVO_SENDER_EMAIL || "officialtraveloboom@gmail.com" };
 const BREVO_REPLY_TO = { name: "Get Set Flight", email: process.env.BREVO_REPLY_EMAIL || "officialtraveloboom@gmail.com" };
 const BREVO_CC = [
