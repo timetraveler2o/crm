@@ -1,3 +1,4 @@
+import nodemailer from 'nodemailer';
 import { Hono } from 'hono';
 import { handle } from 'hono/aws-lambda';
 import { neon } from '@neondatabase/serverless';
@@ -17,11 +18,30 @@ function getDb() {
   return neon(url);
 }
 
-// Brevo API Key resolution
+// Brevo SMTP Relay & API Configuration
 const BREVO_API_KEY = process.env.BREVO_API_KEY || "";
+const BREVO_SMTP_USER = process.env.BREVO_SMTP_USER || "bd8af4001@smtp-brevo.com";
+const BREVO_SMTP_PASS = process.env.BREVO_SMTP_PASS || process.env.BREVO_SMTP_KEY || "";
 const BREVO_SENDER = { name: "Get Set Flight", email: process.env.BREVO_SENDER_EMAIL || "officialtraveloboom@gmail.com" };
 const BREVO_REPLY_TO = { name: "Get Set Flight", email: process.env.BREVO_REPLY_EMAIL || "officialtraveloboom@gmail.com" };
-const BREVO_CC = [{ email: "officialtraveloboom@gmail.com", name: "Operations Team" }];
+const BREVO_CC = [
+  { email: "officialtraveloboom@gmail.com", name: "Operations Team" },
+  { email: "info@getsetflight.com", name: "Get Set Flight Info" }
+];
+
+// Reusable nodemailer transporter for Brevo SMTP (no IP whitelist restrictions)
+const brevoTransporter = nodemailer.createTransport({
+  host: process.env.BREVO_SMTP_SERVER || 'smtp-relay.brevo.com',
+  port: Number(process.env.BREVO_SMTP_PORT) || 587,
+  secure: false,
+  auth: {
+    user: BREVO_SMTP_USER,
+    pass: BREVO_SMTP_PASS,
+  },
+  tls: {
+    rejectUnauthorized: false
+  }
+});
 
 // Global CORS Middleware
 const corsMiddleware = async (c: any, next: any) => {
@@ -39,8 +59,30 @@ api.use('*', corsMiddleware);
 app.options('*', (c: any) => c.text('OK', 200));
 api.options('*', (c: any) => c.text('OK', 200));
 
-// Helper: send Brevo email
+// Helper: send email with dual Brevo SMTP relay & REST API fallback (immune to IP blocking)
 async function sendBrevoEmail(to: string, subject: string, htmlContent: string, skipCc = false) {
+  const ccEmails = (!skipCc && BREVO_CC.length > 0) ? BREVO_CC.map(c => c.email) : [];
+
+  // Strategy 1: Brevo SMTP Relay (Does NOT block dynamic or unrecognized IPs)
+  try {
+    const mailOptions: any = {
+      from: `"${BREVO_SENDER.name}" <${BREVO_SENDER.email}>`,
+      to,
+      subject,
+      html: htmlContent,
+      replyTo: `"${BREVO_REPLY_TO.name}" <${BREVO_REPLY_TO.email}>`,
+    };
+    if (ccEmails.length > 0) {
+      mailOptions.cc = ccEmails;
+    }
+    const info = await brevoTransporter.sendMail(mailOptions);
+    console.log('[Brevo SMTP Success]: messageId =', info.messageId, 'to =', to, 'cc =', ccEmails);
+    return { success: true, messageId: info.messageId, via: 'smtp' };
+  } catch (smtpErr: any) {
+    console.warn('[Brevo SMTP Notice, trying REST API]:', smtpErr.message);
+  }
+
+  // Strategy 2: Brevo REST API v3
   try {
     if (!BREVO_API_KEY) return null;
     const payload: any = {
@@ -64,7 +106,9 @@ async function sendBrevoEmail(to: string, subject: string, htmlContent: string, 
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      console.warn('[Brevo Email API Warning HTTP ' + res.status + ']:', data);
+      console.warn('[Brevo REST API Warning HTTP ' + res.status + ']:', data);
+    } else {
+      console.log('[Brevo REST API Success]: to =', to);
     }
     return data;
   } catch (err) {

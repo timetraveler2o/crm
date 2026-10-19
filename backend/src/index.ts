@@ -5,7 +5,7 @@ import nodemailer from 'nodemailer';
 import * as tables from './db/schema';
 import { buckets } from './db/schema';
 import { db } from './db/index';
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 import { neonSql, queryNeon, syncSiteBookingToNeon, syncBookingToNeon, syncNotificationToNeon, findUserInNeon, fireAndForgetNeon, syncPaymentAuthToNeon, initNeonPaymentAuthTable, initNeonClientVerificationsTable, deletePaymentAuthFromNeon } from './db/neon';
 import { uploadApp } from './upload';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -86,11 +86,12 @@ async function forwardToExternalWebhook(event: string, payload: any) {
 // Brevo (Sendinblue) API & SMTP Configuration
 const BREVO_API_KEY = process.env.BREVO_API_KEY || "";
 const BREVO_SMTP_USER = process.env.BREVO_SMTP_USER || "bd8af4001@smtp-brevo.com";
-const BREVO_SMTP_KEY = process.env.BREVO_SMTP_PASS || process.env.BREVO_SMTP_KEY || process.env.SMTP_PASSWORD || BREVO_API_KEY;
+const BREVO_SMTP_KEY = process.env.BREVO_SMTP_PASS || process.env.BREVO_SMTP_KEY || "";
 const BREVO_SENDER = { name: "Get Set Flight", email: process.env.BREVO_SENDER_EMAIL || "officialtraveloboom@gmail.com" };
 const BREVO_REPLY_TO = { name: "Get Set Flight", email: process.env.BREVO_REPLY_EMAIL || "officialtraveloboom@gmail.com" };
 const BREVO_CC = [
-  { email: "officialtraveloboom@gmail.com", name: "Get Set Flight Team" }
+  { email: "officialtraveloboom@gmail.com", name: "Operations Team" },
+  { email: "info@getsetflight.com", name: "Get Set Flight Info" }
 ];
 
 // Admin emails list for OTP login option
@@ -267,6 +268,8 @@ const smtpTransporter = nodemailer.createTransport({
     pass: BREVO_SMTP_KEY,
   },
 });
+
+const sendBrevoEmail = (to: string, subject: string, html: string, skipCc?: boolean) => sendEmailViaBrevo(to, subject, html, skipCc);
 
 // Send email via Brevo REST API v3 with SMTP relay fallback
 async function sendEmailViaBrevo(to: string, subject: string, html: string, skipCc?: boolean): Promise<{ success: boolean; error?: string; messageId?: string }> {
@@ -1118,7 +1121,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
 
   app.get('/api/public/users', async (c) => {
     const rawUsers = await db.select().from(tables.users);
-    const users = rawUsers.map(({ password: _, ...safeUser }) => ({
+    const users = rawUsers.map(({ password: _, ...safeUser }: any) => ({
       ...safeUser,
       permissions: typeof safeUser.permissions === 'string' ? (() => { try { return JSON.parse(safeUser.permissions); } catch { return null; } })() : (safeUser.permissions || null)
     }));
@@ -3152,14 +3155,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
       // Send notification email to team about new verification submission
       try {
         const clientName = verification.client_name || verification.clientName || 'Client';
-        await fetch('https://api.brevo.com/v3/smtp/email', {
-          method: 'POST',
-          headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': BREVO_API_KEY },
-          body: JSON.stringify({
-            sender: BREVO_SENDER,
-            to: BREVO_CC,
-            subject: `ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬Â New Verification Submitted ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${clientName} (${verification.query_id || verification.queryId || ''})`,
-            htmlContent: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+        const notifHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
               <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:24px;border-radius:12px 12px 0 0;text-align:center;">
                 <h1 style="color:white;margin:0;font-size:20px;">New Verification Submitted</h1>
               </div>
@@ -3174,9 +3170,8 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
                 </table>
                 <p style="margin:16px 0 0;color:#6b7280;font-size:13px;">Please log in to the CRM to review and approve/reject this verification.</p>
               </div>
-            </div>`
-          })
-        });
+            </div>`;
+        await sendBrevoEmail(BREVO_CC[0].email, `New Verification Submitted - ${clientName} (${verification.query_id || verification.queryId || ''})`, notifHtml);
       } catch (emailErr) {
         console.error('[VERIFICATION] Email notification error:', emailErr);
       }
@@ -3424,17 +3419,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
             </div>`;
 
         try {
-          await fetch('https://api.brevo.com/v3/smtp/email', {
-            method: 'POST',
-            headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': BREVO_API_KEY },
-            body: JSON.stringify({
-              sender: BREVO_SENDER,
-              to: [{ email: v.clientEmail, name: clientName }],
-              cc: BREVO_CC,
-              subject: emailSubject,
-              htmlContent: emailBody,
-            })
-          });
+          await sendBrevoEmail(v.clientEmail, emailSubject, emailBody);
         } catch (emailErr) {
           console.error('[VERIFICATION] Email send error:', emailErr);
         }
@@ -3486,182 +3471,17 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     try {
       const { email, clientName, verificationLink, queryId } = await c.req.json();
       if (!email || !verificationLink) return c.json({ success: false, error: 'Email and link required' }, 400);
-
-      const htmlContent = `
-        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;">
-          <div style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);padding:24px;border-radius:8px;text-align:center;color:#ffffff;">
-            <h1 style="margin:0;font-size:22px;font-weight:700;">Identity Verification Required</h1>
-            <p style="margin:8px 0 0;font-size:14px;opacity:0.9;">Booking Reference: ${queryId || 'N/A'}</p>
-          </div>
-          <div style="padding:24px 8px;color:#374151;font-size:15px;line-height:1.6;">
-            <p>Dear <strong>${clientName || 'Valued Customer'}</strong>,</p>
-            <p>To finalize and secure your booking, please complete your secure identity verification using the button below:</p>
-            <div style="text-align:center;margin:30px 0;">
-              <a href="${verificationLink}" style="background:#2563eb;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;display:inline-block;box-shadow:0 4px 6px rgba(37,99,235,0.2);">
-                Complete Identity Verification
-              </a>
-            </div>
-            <p style="font-size:13px;color:#6b7280;">If the button above does not work, copy and paste this link into your browser:</p>
-            <p style="font-size:12px;color:#2563eb;word-break:break-all;"><a href="${verificationLink}">${verificationLink}</a></p>
-            <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
-            <p style="font-size:12px;color:#9ca3af;margin:0;text-align:center;">This is a secure verification message from your travel agent.</p>
-          </div>
-        </div>
-      `;
-
-      if (BREVO_API_KEY) {
-        await fetch('https://api.brevo.com/v3/smtp/email', {
-          method: 'POST',
-          headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': BREVO_API_KEY },
-          body: JSON.stringify({
-            sender: BREVO_SENDER,
-            to: [{ email, name: clientName || 'Client' }],
-            subject: `Identity Verification Required — ${queryId || 'Booking'}`,
-            htmlContent,
-          })
-        });
-      }
-
-      forwardToExternalWebhook('verification_link_sent_to_client', {
-        email,
-        clientName,
-        verificationLink,
-        queryId,
-        timestamp: formatDateTime(),
-      });
-
-      return c.json({ success: true });
-    } catch (err: any) {
-      console.error('[VERIFICATION] Send link email error:', err);
-      return c.json({ success: false, error: err.message }, 500);
-    }
-  });
-
-  // Send verification status email manually to client
-  app.post('/api/public/verification/:id/send-email', async (c) => {
-    try {
-      const id = Number(c.req.param('id'));
-      const { emailType, customMessage } = await c.req.json();
-      
-      const record = await db.select().from(tables.clientVerifications).where(eq(tables.clientVerifications.id, id)).limit(1);
-      if (!record.length) return c.json({ success: false, error: 'Record not found' }, 404);
-      
-      const v = record[0];
-      if (!v.clientEmail) return c.json({ success: false, error: 'No client email on record' }, 400);
-      
-      const clientName = v.clientName || 'Valued Customer';
-      const now = formatDateTime();
-      
-      let subject = '';
-      let htmlContent = '';
-      
-      if (emailType === 'approved') {
-        subject = `ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Your Verification Has Been Approved ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get Set Flight`;
-        htmlContent = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-          <div style="background:linear-gradient(135deg,#059669,#10b981);padding:28px;border-radius:12px 12px 0 0;text-align:center;">
-            <h1 style="color:white;margin:0;font-size:22px;">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Verification Approved</h1>
-          </div>
-          <div style="background:white;padding:28px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
-            <p style="margin:0 0 16px;color:#374151;">Dear <strong>${clientName}</strong>,</p>
-            <p style="margin:0 0 16px;color:#374151;line-height:1.6;">Your identity verification has been approved by our team. ${customMessage || ''}</p>
-            <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ www.getsetflight.com</p>
-          </div>
-        </div>`;
-      } else if (emailType === 'rejected') {
-        subject = `ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Verification Requires Resubmission ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get Set Flight`;
-        htmlContent = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-          <div style="background:linear-gradient(135deg,#dc2626,#ef4444);padding:28px;border-radius:12px 12px 0 0;text-align:center;">
-            <h1 style="color:white;margin:0;font-size:22px;">ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Verification Rejected</h1>
-          </div>
-          <div style="background:white;padding:28px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
-            <p style="margin:0 0 16px;color:#374151;">Dear <strong>${clientName}</strong>,</p>
-            <p style="margin:0 0 16px;color:#374151;line-height:1.6;">Your verification was not approved. ${customMessage || 'Please resubmit with clearer images.'}</p>
-            <p style="margin:16px 0;color:#374151;"><strong>Tips for resubmission:</strong></p>
-            <ul style="color:#374151;line-height:1.8;"><li>Clear selfie with card visible</li><li>Document in good lighting</li><li>No blur or glare</li></ul>
-            <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ www.getsetflight.com</p>
-          </div>
-        </div>`;
-      } else {
-        subject = `ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¹ Verification Update ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get Set Flight`;
-        htmlContent = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-          <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:28px;border-radius:12px 12px 0 0;text-align:center;">
-            <h1 style="color:white;margin:0;font-size:22px;">Verification Update</h1>
-          </div>
-          <div style="background:white;padding:28px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
-            <p style="margin:0 0 16px;color:#374151;">Dear <strong>${clientName}</strong>,</p>
-            <p style="margin:0 0 16px;color:#374151;line-height:1.6;">${customMessage || 'This is an update regarding your identity verification.'}</p>
-            <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ www.getsetflight.com</p>
-          </div>
-        </div>`;
-      }
-
-      await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': BREVO_API_KEY },
-        body: JSON.stringify({
-          sender: BREVO_SENDER,
-          to: [{ email: v.clientEmail, name: clientName }],
-          cc: BREVO_CC,
-          subject,
-          htmlContent,
-        })
-      });
-
-      return c.json({ success: true, message: 'Email sent successfully' });
-    } catch (err: any) {
-      console.error('[VERIFICATION] Manual email error:', err);
-      return c.json({ success: false, error: err.message }, 500);
-    }
-  });
-
-  // Save AI analysis results for a verification
-  app.put('/api/public/verification/:token/ai-result', async (c) => {
-    try {
-      const token = c.req.param('token');
-      const { selfieAiResult, documentAiResult, selfieVerified, documentVerified } = await c.req.json();
-
-      const updates: any = {};
-      if (selfieAiResult !== undefined) updates.selfieAiResult = JSON.stringify(selfieAiResult);
-      if (documentAiResult !== undefined) updates.documentAiResult = JSON.stringify(documentAiResult);
-      if (selfieVerified !== undefined) updates.selfieVerified = selfieVerified ? 1 : 0;
-      if (documentVerified !== undefined) updates.documentVerified = documentVerified ? 1 : 0;
-
-      await db.update(tables.clientVerifications)
-        .set(updates)
-        .where(eq(tables.clientVerifications.token, token));
-
-      return c.json({ success: true });
-    } catch (err: any) {
-      return c.json({ success: false, error: err.message }, 500);
-    }
-  });
-
-  // Send verification link via email to client
-  app.post('/api/public/verification/send-link-email', async (c) => {
-    try {
-      const { email, clientName, verificationLink, queryId } = await c.req.json();
-      if (!email || !verificationLink) return c.json({ success: false, error: 'Email and link required' }, 400);
       
       const name = clientName || 'Valued Customer';
-      await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': BREVO_API_KEY },
-        body: JSON.stringify({
-          sender: BREVO_SENDER,
-          to: [{ email, name }],
-          subject: `ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â Identity Verification Required ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get Set Flight${queryId ? ` (${queryId})` : ''}`,
-          htmlContent: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+      const emailHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
             <div style="background:linear-gradient(135deg,#0d9488,#14b8a6);padding:28px;border-radius:12px 12px 0 0;text-align:center;">
-              <div style="width:60px;height:60px;background:white;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;">
-                <span style="font-size:28px;">ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â</span>
-              </div>
               <h1 style="color:white;margin:0;font-size:22px;">Identity Verification Required</h1>
             </div>
             <div style="background:white;padding:28px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
               <p style="margin:0 0 16px;color:#374151;font-size:16px;">Dear <strong>${name}</strong>,</p>
               <p style="margin:0 0 16px;color:#374151;line-height:1.6;">As part of our security process, we need to verify your identity for your booking${queryId ? ` (${queryId})` : ''}. Please complete the verification by clicking the button below.</p>
               <div style="text-align:center;margin:24px 0;">
-                <a href="${verificationLink}" style="display:inline-block;background:linear-gradient(135deg,#0d9488,#14b8a6);color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">Complete Verification ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢</a>
+                <a href="${verificationLink}" style="display:inline-block;background:linear-gradient(135deg,#0d9488,#14b8a6);color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">Complete Verification</a>
               </div>
               <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:16px;margin:16px 0;">
                 <p style="margin:0;color:#0f766e;font-size:13px;"><strong>What you'll need:</strong></p>
@@ -3672,12 +3492,11 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
               </div>
               <p style="margin:16px 0 0;color:#6b7280;font-size:13px;">This link expires in 72 hours. If you did not request this verification, please ignore this email.</p>
               <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-              <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ www.getsetflight.com ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ info@getsetflight.com</p>
+              <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">Get Set Flight • www.getsetflight.com • info@getsetflight.com</p>
             </div>
-          </div>`
-        })
-      });
-      
+          </div>`;
+
+      await sendBrevoEmail(email, `Identity Verification Required — Get Set Flight${queryId ? ` (${queryId})` : ''}`, emailHtml);
       return c.json({ success: true, message: 'Verification link email sent' });
     } catch (err: any) {
       console.error('[VERIFICATION] Send link email error:', err);
