@@ -7,19 +7,11 @@ export const getApiBaseUrl = (): string => {
     return String(envUrl).replace(/\/$/, '');
   }
 
-  if (typeof window !== 'undefined') {
-    const { hostname, protocol, origin } = window.location;
-    // Local development targets local backend port 3000
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0') {
-      return `http://${hostname}:3000`;
-    }
-    // Deployed site over HTTPS uses same origin to avoid mixed-content security blocks
-    if (protocol === 'https:') {
-      return origin;
-    }
-    return `http://${hostname}:3000`;
-  }
-  return 'http://localhost:3000';
+  // When running in browser:
+  // In dev (127.0.0.1:5173), Vite dev server proxies /api directly to https://getsetflightcrm.netlify.app
+  // In production (getsetflightcrm.netlify.app), Netlify routes /api directly to functions
+  // Returning empty string '' ensures same-origin relative URLs without CORS or port 3000 refusal
+  return '';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
@@ -30,13 +22,12 @@ const LIVE_API_FALLBACK = 'https://getsetflightcrm.netlify.app';
 export const client = {
   api: {
     fetch: async (path: string, options?: RequestInit) => {
-      const base = getApiBaseUrl();
       const cleanPath = path.startsWith('/') ? path : `/${path}`;
 
       const tryFetch = async (url: string) => {
         const res = await fetch(url, options);
         const contentType = res.headers.get('content-type') || '';
-        // If server returned HTML instead of JSON (e.g. Vite SPA fallback when backend port 3000 is offline), throw to trigger fallback
+        // If server returned HTML instead of JSON (e.g. Vite SPA fallback when offline), throw to trigger fallback
         if (contentType.includes('text/html') && !cleanPath.includes('/uploads/')) {
           throw new Error('Endpoint returned HTML instead of API JSON response');
         }
@@ -44,16 +35,15 @@ export const client = {
       };
 
       try {
-        const fullUrl = base ? `${base}${cleanPath}` : cleanPath;
-        return await tryFetch(fullUrl);
+        // Try same-origin relative path first (seamlessly proxied by Vite or Netlify)
+        return await tryFetch(cleanPath);
       } catch (err) {
-        console.warn(`[API Fetch Warning] Direct fetch to ${base}${cleanPath} failed, attempting live production fallback:`, err);
-        // Fallback 1: If on localhost or direct fetch failed, try live Netlify API
+        console.warn(`[API Fetch Warning] Direct fetch to ${cleanPath} failed, attempting live production fallback:`, err);
         try {
           return await tryFetch(`${LIVE_API_FALLBACK}${cleanPath}`);
         } catch (liveErr) {
           console.warn(`[API Fetch Fallback Failed]:`, liveErr);
-          // Last resort: relative path
+          // Last resort: raw fetch
           return await fetch(cleanPath, options);
         }
       }

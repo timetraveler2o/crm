@@ -37,8 +37,26 @@ export default function UsersPage() {
   const { users, addUser, updateUser, deleteUser, roles, addAuditLog } = useCrmStore();
 
   const availableRoles = useMemo(() => {
-    const dynamicRoles = (roles || []).filter(r => r.status === 'Active').map(r => r.roleName);
-    return Array.from(new Set(['Admin', 'Super Admin', ...dynamicRoles]));
+    const blacklist = new Set([
+      'super admin',
+      'superadmin',
+      'accountant',
+      'it',
+      'it (information tech)',
+      'ticketing',
+      'operation manager',
+      'manager',
+      'hr',
+      'hr (human resource)',
+      'agent'
+    ]);
+    const dynamicRoles = (roles || [])
+      .filter(r => r.status === 'Active' && !blacklist.has(r.roleName.trim().toLowerCase()))
+      .map(r => r.roleName.trim());
+    
+    // Always include Admin and strictly active roles created/managed by admin in DB
+    const list = Array.from(new Set(['Admin', ...dynamicRoles]));
+    return list;
   }, [roles]);
 
   const [showPermissionsModal, setShowPermissionsModal] = useState(false);
@@ -60,7 +78,7 @@ export default function UsersPage() {
   const [form, setForm] = useState({
     addedBy: 'Admin',
     name: '',
-    role: 'Travel Consultant',
+    role: 'Travel Executive',
     email: '',
     phone: '',
     emergencyNumber: '',
@@ -194,7 +212,7 @@ export default function UsersPage() {
     setForm({
       addedBy: currentUser?.name || 'Admin',
       name: '',
-      role: 'Travel Consultant',
+      role: 'Travel Executive',
       email: '',
       phone: '',
       emergencyNumber: '',

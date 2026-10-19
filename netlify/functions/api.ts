@@ -30,12 +30,14 @@ const corsMiddleware = async (c: any, next: any) => {
   c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
   c.header('Access-Control-Max-Age', '86400');
   if (c.req.method === 'OPTIONS') {
-    return c.text('', 204);
+    return c.text('OK', 200);
   }
   await next();
 };
 app.use('*', corsMiddleware);
 api.use('*', corsMiddleware);
+app.options('*', (c: any) => c.text('OK', 200));
+api.options('*', (c: any) => c.text('OK', 200));
 
 // Helper: send Brevo email
 async function sendBrevoEmail(to: string, subject: string, htmlContent: string, skipCc = false) {
@@ -140,6 +142,44 @@ api.get('/health', async (c) => {
     return c.json({ success: true, status: 'ok', database: 'connected', result });
   } catch (err: any) {
     return c.json({ success: false, status: 'degraded', error: err.message }, 500);
+  }
+});
+
+// ========================================================
+// 1B. SYSTEM SETTINGS
+// ========================================================
+api.get('/public/system-settings', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT key, value, description FROM system_settings`;
+    const settings: Record<string, string> = {};
+    rows.forEach((r: any) => {
+      settings[r.key] = r.value;
+    });
+    return c.json({ success: true, data: settings });
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message, data: { login_otp_enabled: 'true' } }, 500);
+  }
+});
+
+api.post('/public/system-settings', async (c) => {
+  try {
+    const body = await parseAnyBody(c);
+    const { key, value, updatedBy } = body;
+    if (!key) {
+      return c.json({ success: false, message: 'Missing key' }, 400);
+    }
+    const sql = getDb();
+    const now = new Date().toISOString();
+    await sql`
+      INSERT INTO system_settings (key, value, "updatedBy", "updatedAt")
+      VALUES (${key}, ${String(value)}, ${updatedBy || 'Admin'}, ${now})
+      ON CONFLICT (key) DO UPDATE
+      SET value = EXCLUDED.value, "updatedBy" = EXCLUDED."updatedBy", "updatedAt" = EXCLUDED."updatedAt"
+    `;
+    return c.json({ success: true, message: 'Setting updated successfully' });
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message }, 500);
   }
 });
 
@@ -346,7 +386,11 @@ api.post('/public/login-verify-otp', async (c) => {
       return c.json({ success: false, message: 'Account is inactive. Contact administrator.' }, 403);
     }
 
-    let permissions: string[] = ['All'];
+    let permissions: string[] = [];
+    const isUserAdmin = ['admin', 'super admin', 'superuser'].includes((user.role || '').toLowerCase());
+    if (isUserAdmin) {
+      permissions = ['All'];
+    }
     try {
       if (user.permissions) {
         permissions = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions;

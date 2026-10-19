@@ -77,11 +77,9 @@ export interface AuditLog {
 
 export const STANDARD_ROLES = [
   'Admin',
-  'Super Admin',
   'Supervisor',
   'Sr. Travel Executive',
-  'Travel Executive',
-  'HR'
+  'Travel Executive'
 ] as const;
 
 export interface QueryStatus {
@@ -355,11 +353,9 @@ export const CABINS = ['Economy', 'Premium Economy', 'Business', 'First Class'] 
 
 export const ROLE_NAMES = [
   'Admin',
-  'Super Admin',
   'Supervisor',
   'Sr. Travel Executive',
-  'Travel Executive',
-  'HR'
+  'Travel Executive'
 ];
 
 export const COMPANY_NAMES = ['Get Set Flight', 'Look Book Ticket', 'Traveloboom'] as const;

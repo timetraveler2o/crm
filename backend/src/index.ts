@@ -16,6 +16,7 @@ import { cors } from 'hono/cors';
 const app = new Hono();
 
 // Enable CORS for all routes and preflight requests
+app.options('*', (c: any) => c.text('OK', 200));
 app.use('*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -709,6 +710,42 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
     await db.run(sql`DELETE FROM password_otps WHERE email = ${key}`);
     return c.json({ success: true, message: 'Verified' });
+  });
+
+    // --- System Settings (Neon Cloud Synced) ---
+  app.get('/api/public/system-settings', async (c) => {
+    try {
+      const rows = await queryNeon('SELECT key, value, description FROM system_settings');
+      const settings: Record<string, string> = {};
+      (rows || []).forEach((r: any) => {
+        settings[r.key] = r.value;
+      });
+      return c.json({ success: true, data: settings });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message, data: { login_otp_enabled: 'true' } }, 500);
+    }
+  });
+
+  app.post('/api/public/system-settings', async (c) => {
+    try {
+      let body: any = {};
+      try {
+        body = await c.req.json();
+      } catch {
+        const raw = await c.req.text();
+        try { body = JSON.parse(raw); } catch {}
+      }
+      const { key, value, updatedBy } = body;
+      if (!key) return c.json({ success: false, message: 'Missing key' }, 400);
+      const now = new Date().toISOString();
+      await queryNeon(
+        'INSERT INTO system_settings (key, value, "updatedBy", "updatedAt") VALUES ($1, $2, $3, $4) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedBy" = EXCLUDED."updatedBy", "updatedAt" = EXCLUDED."updatedAt"',
+        [key, String(value), updatedBy || 'Admin', now]
+      );
+      return c.json({ success: true, message: 'Setting updated successfully' });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
   });
 
   // --- Two-Factor Email OTP Login Flow ---
