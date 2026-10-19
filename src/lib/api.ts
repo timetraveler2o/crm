@@ -24,27 +24,37 @@ export const getApiBaseUrl = (): string => {
 
 export const API_BASE_URL = getApiBaseUrl();
 
+const LIVE_API_FALLBACK = 'https://getsetflightcrm.netlify.app';
+
 // Standard Fetch Wrapper with automatic fallback
 export const client = {
   api: {
     fetch: async (path: string, options?: RequestInit) => {
       const base = getApiBaseUrl();
       const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+      const tryFetch = async (url: string) => {
+        const res = await fetch(url, options);
+        const contentType = res.headers.get('content-type') || '';
+        // If server returned HTML instead of JSON (e.g. Vite SPA fallback when backend port 3000 is offline), throw to trigger fallback
+        if (contentType.includes('text/html') && !cleanPath.includes('/uploads/')) {
+          throw new Error('Endpoint returned HTML instead of API JSON response');
+        }
+        return res;
+      };
+
       try {
         const fullUrl = base ? `${base}${cleanPath}` : cleanPath;
-        const res = await fetch(fullUrl, options);
-        return res;
+        return await tryFetch(fullUrl);
       } catch (err) {
-        console.warn(`[API Fetch Warning] Direct fetch to ${base}${cleanPath} failed, attempting fallback:`, err);
-        // Fallback 1: try relative path (works if reverse proxied on deployed host)
+        console.warn(`[API Fetch Warning] Direct fetch to ${base}${cleanPath} failed, attempting live production fallback:`, err);
+        // Fallback 1: If on localhost or direct fetch failed, try live Netlify API
         try {
+          return await tryFetch(`${LIVE_API_FALLBACK}${cleanPath}`);
+        } catch (liveErr) {
+          console.warn(`[API Fetch Fallback Failed]:`, liveErr);
+          // Last resort: relative path
           return await fetch(cleanPath, options);
-        } catch {
-          // Fallback 2: localhost / 127.0.0.1 toggle
-          const altHost = (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1')
-            ? 'localhost'
-            : '127.0.0.1';
-          return fetch(`http://${altHost}:3000${cleanPath}`, options);
         }
       }
     }
