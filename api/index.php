@@ -828,7 +828,19 @@ $resourceId = is_numeric($lastPart) ? (int)$lastPart : null;
 if (strpos($path, '/bookings') !== false && strpos($path, '/site-bookings') === false) {
     if ($method === 'GET') {
         $rows = $pdo ? $pdo->query("SELECT * FROM bookings ORDER BY id DESC LIMIT 1000")->fetchAll() : [];
-        echo json_encode(['success' => true, 'data' => $rows]);
+        $fileRows = loadJsonBackup('bookings.json');
+        $map = [];
+        foreach ($fileRows as $r) {
+            $k = $r['queryId'] ?? (string)($r['id'] ?? '');
+            if ($k) $map[$k] = $r;
+        }
+        foreach ($rows as $r) {
+            $k = $r['queryId'] ?? (string)($r['id'] ?? '');
+            if ($k) {
+                $map[$k] = isset($map[$k]) ? array_merge($map[$k], $r) : $r;
+            }
+        }
+        echo json_encode(['success' => true, 'data' => array_values($map)]);
         exit;
     }
 
@@ -838,6 +850,7 @@ if (strpos($path, '/bookings') !== false && strpos($path, '/site-bookings') === 
         $queryId = $data['queryId'] ?? ($prefix . '-Lead-' . time());
 
         $now = date('Y-m-d H:i:s');
+        $newBooking = null;
         if ($pdo) {
             $stmt = $pdo->prepare("
                 INSERT INTO bookings (
@@ -887,22 +900,24 @@ if (strpos($path, '/bookings') !== false && strpos($path, '/site-bookings') === 
             if (!empty($newBooking['email']) && in_array($newBooking['queryStatus'], ['Sold', 'Send to QC'])) {
                 sendBrevoEmail($newBooking['email'], "Booking Update: {$newBooking['queryStatus']}", "<p>Your booking {$queryId} status is {$newBooking['queryStatus']}.</p>");
             }
-
-            echo json_encode(['success' => true, 'data' => $newBooking]);
-            exit;
         }
 
-        // Resilient fallback if PDO offline
-        $data['id'] = time();
-        $data['queryId'] = $queryId;
-        $data['created'] = $now;
-        $data['modified'] = $now;
-        echo json_encode(['success' => true, 'data' => $data]);
+        $savedBooking = $newBooking ?: array_merge($data, [
+            'id' => time(),
+            'queryId' => $queryId,
+            'created' => $now,
+            'modified' => $now,
+            'company' => $company
+        ]);
+        upsertJsonBackup('bookings.json', $savedBooking, 'queryId');
+
+        echo json_encode(['success' => true, 'data' => $savedBooking]);
         exit;
     }
 
     if ($method === 'PUT' && $resourceId) {
         $now = date('Y-m-d H:i:s');
+        $updated = null;
         if ($pdo) {
             $allowed = [
                 'addedBy', 'firstName', 'lastName', 'email', 'phone', 'origin', 'destination',
@@ -940,13 +955,12 @@ if (strpos($path, '/bookings') !== false && strpos($path, '/site-bookings') === 
             if (!empty($updated['email']) && !empty($data['queryStatus'])) {
                 sendBrevoEmail($updated['email'], "Booking Status Update: {$data['queryStatus']}", "<p>Your booking {$updated['queryId']} status has been updated to <b>{$data['queryStatus']}</b>.</p>");
             }
-
-            echo json_encode(['success' => true, 'data' => $updated]);
-            exit;
         }
-        $data['id'] = $resourceId;
-        $data['modified'] = $now;
-        echo json_encode(['success' => true, 'data' => $data]);
+
+        $savedUpdated = $updated ?: array_merge($data, ['id' => $resourceId, 'modified' => $now]);
+        upsertJsonBackup('bookings.json', $savedUpdated, 'id');
+
+        echo json_encode(['success' => true, 'data' => $savedUpdated]);
         exit;
     }
 
@@ -954,6 +968,11 @@ if (strpos($path, '/bookings') !== false && strpos($path, '/site-bookings') === 
         if ($pdo) {
             $pdo->prepare("DELETE FROM bookings WHERE id = ?")->execute([$resourceId]);
         }
+        $existingItems = loadJsonBackup('bookings.json');
+        $filtered = array_values(array_filter($existingItems, function($item) use ($resourceId) {
+            return ($item['id'] ?? null) != $resourceId;
+        }));
+        saveJsonBackup('bookings.json', $filtered);
         echo json_encode(['success' => true, 'message' => 'Booking deleted']);
         exit;
     }
@@ -963,13 +982,26 @@ if (strpos($path, '/bookings') !== false && strpos($path, '/site-bookings') === 
 if (strpos($path, '/site-bookings') !== false) {
     if ($method === 'GET') {
         $rows = $pdo ? $pdo->query("SELECT * FROM site_bookings ORDER BY id DESC LIMIT 500")->fetchAll() : [];
-        echo json_encode(['success' => true, 'data' => $rows]);
+        $fileRows = loadJsonBackup('site_bookings.json');
+        $map = [];
+        foreach ($fileRows as $r) {
+            $k = $r['queryId'] ?? (string)($r['id'] ?? '');
+            if ($k) $map[$k] = $r;
+        }
+        foreach ($rows as $r) {
+            $k = $r['queryId'] ?? (string)($r['id'] ?? '');
+            if ($k) {
+                $map[$k] = isset($map[$k]) ? array_merge($map[$k], $r) : $r;
+            }
+        }
+        echo json_encode(['success' => true, 'data' => array_values($map)]);
         exit;
     }
 
     if ($method === 'POST') {
         $queryId = $data['queryId'] ?? ('WEB-' . rand(100000, 999999));
         $now = date('Y-m-d H:i:s');
+        $row = null;
         if ($pdo) {
             $stmt = $pdo->prepare("
                 INSERT INTO site_bookings (queryId, name, email, phone, origin, destination, travelDates, status, assignment, querySource, date, company)
@@ -991,16 +1023,16 @@ if (strpos($path, '/site-bookings') !== false) {
             ]);
             $newId = (int)$pdo->lastInsertId();
             $row = $pdo->query("SELECT * FROM site_bookings WHERE id = {$newId} LIMIT 1")->fetch();
-            echo json_encode(['success' => true, 'data' => $row]);
-            exit;
         }
-        $data['id'] = time();
-        $data['queryId'] = $queryId;
-        echo json_encode(['success' => true, 'data' => $data]);
+
+        $savedRow = $row ?: array_merge($data, ['id' => time(), 'queryId' => $queryId, 'date' => $now]);
+        upsertJsonBackup('site_bookings.json', $savedRow, 'queryId');
+        echo json_encode(['success' => true, 'data' => $savedRow]);
         exit;
     }
 
     if ($method === 'PUT' && $resourceId) {
+        $row = null;
         if ($pdo) {
             $sets = [];
             $vals = [];
@@ -1015,11 +1047,10 @@ if (strpos($path, '/site-bookings') !== false) {
                 $pdo->prepare("UPDATE site_bookings SET " . implode(', ', $sets) . " WHERE id = ?")->execute($vals);
             }
             $row = $pdo->query("SELECT * FROM site_bookings WHERE id = {$resourceId} LIMIT 1")->fetch();
-            echo json_encode(['success' => true, 'data' => $row]);
-            exit;
         }
-        $data['id'] = $resourceId;
-        echo json_encode(['success' => true, 'data' => $data]);
+        $savedRow = $row ?: array_merge($data, ['id' => $resourceId]);
+        upsertJsonBackup('site_bookings.json', $savedRow, 'id');
+        echo json_encode(['success' => true, 'data' => $savedRow]);
         exit;
     }
 
@@ -1027,6 +1058,11 @@ if (strpos($path, '/site-bookings') !== false) {
         if ($pdo) {
             $pdo->prepare("DELETE FROM site_bookings WHERE id = ?")->execute([$resourceId]);
         }
+        $existing = loadJsonBackup('site_bookings.json');
+        $filtered = array_values(array_filter($existing, function($item) use ($resourceId) {
+            return ($item['id'] ?? null) != $resourceId;
+        }));
+        saveJsonBackup('site_bookings.json', $filtered);
         echo json_encode(['success' => true, 'message' => 'Deleted']);
         exit;
     }

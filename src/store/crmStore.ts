@@ -220,16 +220,116 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
               : [])
       }));
 
+      const existingState = get();
+
+      // Bookings merge: never wipe out user bookings on refresh or empty response
+      const incomingBookings = (bookings.data || []).map(normalizeBooking);
+      let finalBookings = incomingBookings;
+      if (incomingBookings.length === 0 && existingState.bookings.length > 0) {
+        finalBookings = existingState.bookings;
+      } else if (existingState.bookings.length > 0) {
+        const map = new Map<string, any>();
+        for (const b of incomingBookings) {
+          const key = b.queryId || String(b.id);
+          if (key) map.set(key, b);
+        }
+        for (const b of existingState.bookings) {
+          const key = b.queryId || String(b.id);
+          if (key && !map.has(key)) {
+            map.set(key, b);
+          }
+        }
+        finalBookings = Array.from(map.values());
+      }
+
+      // Site bookings merge
+      const incomingSb = Array.isArray(sb.data) ? sb.data : [];
+      let finalSb = incomingSb;
+      if (incomingSb.length === 0 && existingState.siteBookings.length > 0) {
+        finalSb = existingState.siteBookings;
+      } else if (existingState.siteBookings.length > 0) {
+        const map = new Map<string, any>();
+        for (const b of incomingSb) {
+          const key = b.queryId || String(b.id);
+          if (key) map.set(key, b);
+        }
+        for (const b of existingState.siteBookings) {
+          const key = b.queryId || String(b.id);
+          if (key && !map.has(key)) {
+            map.set(key, b);
+          }
+        }
+        finalSb = Array.from(map.values());
+      }
+
+      // Users merge
+      let finalUsers = parsedUsers;
+      if (parsedUsers.length === 0 && existingState.users.length > 0) {
+        finalUsers = existingState.users;
+      } else if (existingState.users.length > 0) {
+        const map = new Map<string, any>();
+        for (const u of parsedUsers) {
+          const key = (u.email ? u.email.toLowerCase() : '') || String(u.id);
+          if (key) map.set(key, u);
+        }
+        for (const u of existingState.users) {
+          const key = (u.email ? u.email.toLowerCase() : '') || String(u.id);
+          if (key && !map.has(key)) {
+            map.set(key, u);
+          }
+        }
+        finalUsers = Array.from(map.values());
+      }
+
+      // Roles merge
+      let finalRoles = parsedRoles;
+      if (parsedRoles.length === 0 && existingState.roles.length > 0) {
+        finalRoles = existingState.roles;
+      } else if (existingState.roles.length > 0) {
+        const map = new Map<string, any>();
+        for (const r of parsedRoles) {
+          const key = (r.name || r.roleName || '').toLowerCase() || String(r.id);
+          if (key) map.set(key, r);
+        }
+        for (const r of existingState.roles) {
+          const key = (r.name || r.roleName || '').toLowerCase() || String(r.id);
+          if (key && !map.has(key)) {
+            map.set(key, r);
+          }
+        }
+        finalRoles = Array.from(map.values());
+      }
+
+      // Query statuses merge
+      const incomingQs = Array.isArray(qs.data) ? qs.data : [];
+      let finalQs = incomingQs;
+      if (incomingQs.length === 0 && existingState.queryStatuses.length > 0) {
+        finalQs = existingState.queryStatuses;
+      } else if (existingState.queryStatuses.length > 0) {
+        const map = new Map<string, any>();
+        for (const q of incomingQs) {
+          const key = (q.name || '').toLowerCase() || String(q.id);
+          if (key) map.set(key, q);
+        }
+        for (const q of existingState.queryStatuses) {
+          const key = (q.name || '').toLowerCase() || String(q.id);
+          if (key && !map.has(key)) {
+            map.set(key, q);
+          }
+        }
+        finalQs = Array.from(map.values());
+      }
+
       set({
-        users: parsedUsers,
-        roles: parsedRoles,
-        auditLogs: auditRes?.data || [],
-        bookings: (bookings.data || []).map(normalizeBooking),
-        attendanceSheet: sheet.data || [],
-        leaveBalances: balances.data || [],
-        queryStatuses: qs.data || [],
-        siteBookings: sb.data || [],
-        attendance: att.data || [],
+        users: finalUsers,
+        roles: finalRoles,
+        auditLogs: auditRes?.data || existingState.auditLogs || [],
+        bookings: finalBookings,
+        attendanceSheet: sheet.data || existingState.attendanceSheet || [],
+        leaveBalances: balances.data || existingState.leaveBalances || [],
+        queryStatuses: finalQs,
+        siteBookings: finalSb,
+        attendance: att.data || existingState.attendance || [],
         isLoading: false,
       });
     } catch (err: any) {
@@ -761,5 +861,16 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
   }
 }), {
   name: 'crm-storage',
-  partialize: (state) => ({ activeBreak: state.activeBreak }),
+  partialize: (state) => ({
+    bookings: state.bookings,
+    siteBookings: state.siteBookings,
+    users: state.users,
+    roles: state.roles,
+    queryStatuses: state.queryStatuses,
+    attendance: state.attendance,
+    attendanceSheet: state.attendanceSheet,
+    leaveBalances: state.leaveBalances,
+    systemSettings: state.systemSettings,
+    activeBreak: state.activeBreak,
+  }),
 }));

@@ -1173,26 +1173,46 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ success: false, message: 'Invalid credentials' }, 401);
   });
 
-  // --- Users (Live Neon PostgreSQL Single Source of Truth) ---
+  // --- Users (Unified Neon PostgreSQL + SQLite Single Source of Truth) ---
   app.get('/api/public/users', async (c) => {
+    let neonUsersList: any[] = [];
     try {
       const neonUsers = await neonSql.query('SELECT id, "addedBy", image, name, role, email, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified FROM users ORDER BY id ASC');
-      if (neonUsers && Array.isArray(neonUsers) && neonUsers.length > 0) {
-        const users = neonUsers.map((safeUser: any) => ({
+      if (neonUsers && Array.isArray(neonUsers)) {
+        neonUsersList = neonUsers.map((safeUser: any) => ({
           ...safeUser,
           permissions: typeof safeUser.permissions === 'string' ? (() => { try { return JSON.parse(safeUser.permissions); } catch { return null; } })() : (safeUser.permissions || null)
         }));
-        return c.json({ data: users });
       }
     } catch (neonErr: any) {
-      console.warn('[API] Neon GET /users fallback to local:', neonErr.message);
+      console.warn('[API] Neon GET /users notice:', neonErr.message);
     }
-    const rawUsers = await db.select().from(tables.users);
-    const users = rawUsers.map(({ password: _, ...safeUser }: any) => ({
-      ...safeUser,
-      permissions: typeof safeUser.permissions === 'string' ? (() => { try { return JSON.parse(safeUser.permissions); } catch { return null; } })() : (safeUser.permissions || null)
-    }));
-    return c.json({ data: users });
+
+    let localUsersList: any[] = [];
+    try {
+      const rawUsers = await db.select().from(tables.users);
+      localUsersList = rawUsers.map(({ password: _, ...safeUser }: any) => ({
+        ...safeUser,
+        permissions: typeof safeUser.permissions === 'string' ? (() => { try { return JSON.parse(safeUser.permissions); } catch { return null; } })() : (safeUser.permissions || null)
+      }));
+    } catch (dbErr: any) {
+      console.warn('[API] Local GET /users notice:', dbErr.message);
+    }
+
+    const mergedMap = new Map<string, any>();
+    for (const u of neonUsersList) {
+      const key = (u.email ? u.email.toLowerCase() : '') || String(u.id);
+      if (key) mergedMap.set(key, u);
+    }
+    for (const u of localUsersList) {
+      const key = (u.email ? u.email.toLowerCase() : '') || String(u.id);
+      if (key) {
+        const existing = mergedMap.get(key);
+        mergedMap.set(key, existing ? { ...existing, ...u } : u);
+      }
+    }
+
+    return c.json({ data: Array.from(mergedMap.values()) });
   });
 
   app.post('/api/public/users', async (c) => {
@@ -1360,30 +1380,50 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
   });
 
-  // --- Roles (Live Neon PostgreSQL Single Source of Truth) ---
+  // --- Roles (Unified Neon PostgreSQL + SQLite Single Source of Truth) ---
   app.get('/api/public/roles', async (c) => {
+    let neonRolesList: any[] = [];
     try {
       const neonRoles = await neonSql.query('SELECT id, name, permissions, "isSystem", created, modified FROM roles ORDER BY id ASC');
-      if (neonRoles && Array.isArray(neonRoles) && neonRoles.length > 0) {
-        const parsedRoles = neonRoles.map((r: any) => ({
+      if (neonRoles && Array.isArray(neonRoles)) {
+        neonRolesList = neonRoles.map((r: any) => ({
           ...r,
           roleName: r.roleName || r.name,
           name: r.roleName || r.name,
           permissions: typeof r.permissions === 'string' ? (() => { try { return JSON.parse(r.permissions); } catch { return []; } })() : (r.permissions || [])
         }));
-        return c.json({ data: parsedRoles });
       }
     } catch (neonErr: any) {
-      console.warn('[API] Neon GET /roles fallback:', neonErr.message);
+      console.warn('[API] Neon GET /roles notice:', neonErr.message);
     }
-    const roles = await db.select().from(tables.roles);
-    const parsedRoles = roles.map((r: any) => ({
-      ...r,
-      roleName: r.roleName || r.name,
-      name: r.roleName || r.name,
-      permissions: r.permissions ? (typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions) : []
-    }));
-    return c.json({ data: parsedRoles });
+
+    let localRolesList: any[] = [];
+    try {
+      const roles = await db.select().from(tables.roles);
+      localRolesList = roles.map((r: any) => ({
+        ...r,
+        roleName: r.roleName || r.name,
+        name: r.roleName || r.name,
+        permissions: r.permissions ? (typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions) : []
+      }));
+    } catch (dbErr: any) {
+      console.warn('[API] Local GET /roles notice:', dbErr.message);
+    }
+
+    const mergedMap = new Map<string, any>();
+    for (const r of neonRolesList) {
+      const key = (r.name || r.roleName || '').toLowerCase() || String(r.id);
+      if (key) mergedMap.set(key, r);
+    }
+    for (const r of localRolesList) {
+      const key = (r.name || r.roleName || '').toLowerCase() || String(r.id);
+      if (key) {
+        const existing = mergedMap.get(key);
+        mergedMap.set(key, existing ? { ...existing, ...r } : r);
+      }
+    }
+
+    return c.json({ data: Array.from(mergedMap.values()) });
   });
 
   app.post('/api/public/roles', async (c) => {
@@ -1471,18 +1511,39 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ success: true });
   });
 
-  // --- Query Statuses (Live Neon PostgreSQL Synced) ---
+  // --- Query Statuses (Unified Neon PostgreSQL + SQLite Synced) ---
   app.get('/api/public/query-statuses', async (c) => {
+    let neonList: any[] = [];
     try {
       const neonStatuses = await neonSql.query('SELECT * FROM query_statuses ORDER BY id ASC');
-      if (neonStatuses && Array.isArray(neonStatuses) && neonStatuses.length > 0) {
-        return c.json({ data: neonStatuses });
+      if (neonStatuses && Array.isArray(neonStatuses)) {
+        neonList = neonStatuses;
       }
     } catch (neonErr: any) {
-      console.warn('[API] Neon GET /query-statuses fallback:', neonErr.message);
+      console.warn('[API] Neon GET /query-statuses notice:', neonErr.message);
     }
-    const statuses = await db.select().from(tables.queryStatuses);
-    return c.json({ data: statuses });
+
+    let localList: any[] = [];
+    try {
+      localList = await db.select().from(tables.queryStatuses);
+    } catch (dbErr: any) {
+      console.warn('[API] Local GET /query-statuses notice:', dbErr.message);
+    }
+
+    const mergedMap = new Map<string, any>();
+    for (const s of neonList) {
+      const key = (s.name || '').toLowerCase() || String(s.id);
+      if (key) mergedMap.set(key, s);
+    }
+    for (const s of localList) {
+      const key = (s.name || '').toLowerCase() || String(s.id);
+      if (key) {
+        const existing = mergedMap.get(key);
+        mergedMap.set(key, existing ? { ...existing, ...s } : s);
+      }
+    }
+
+    return c.json({ data: Array.from(mergedMap.values()) });
   });
 
   app.post('/api/public/query-statuses', async (c) => {
@@ -1553,12 +1614,13 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ success: true });
   });
 
-  // --- Bookings (Live Neon PostgreSQL Single Source of Truth) ---
+  // --- Bookings (Unified Neon PostgreSQL + SQLite Single Source of Truth) ---
   app.get('/api/public/bookings', async (c) => {
+    let neonRows: any[] = [];
     try {
       const neonBookings = await neonSql.query('SELECT * FROM bookings ORDER BY id DESC LIMIT 500');
-      if (neonBookings && Array.isArray(neonBookings) && neonBookings.length > 0) {
-        const normalized = neonBookings.map((r: any) => ({
+      if (neonBookings && Array.isArray(neonBookings)) {
+        neonRows = neonBookings.map((r: any) => ({
           ...r,
           pnrDetails: r.pnr_details !== undefined ? r.pnr_details : (r.pnrDetails !== undefined ? r.pnrDetails : '[]'),
           pnr_details: r.pnr_details !== undefined ? r.pnr_details : (r.pnrDetails !== undefined ? r.pnrDetails : '[]'),
@@ -1567,13 +1629,32 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
           qcStatus: r.qc_status !== undefined ? r.qc_status : (r.qcStatus !== undefined ? r.qcStatus : 'NULL'),
           qc_status: r.qc_status !== undefined ? r.qc_status : (r.qcStatus !== undefined ? r.qcStatus : 'NULL'),
         }));
-        return c.json({ success: true, data: normalized });
       }
     } catch (neonErr: any) {
-      console.warn('[API] Neon GET /bookings fallback:', neonErr.message);
+      console.warn('[API] Neon GET /bookings notice:', neonErr.message);
     }
-    const bookings = await db.select().from(tables.bookings);
-    return c.json({ success: true, data: bookings });
+
+    let localBookings: any[] = [];
+    try {
+      localBookings = await db.select().from(tables.bookings);
+    } catch (dbErr: any) {
+      console.warn('[API] Local GET /bookings notice:', dbErr.message);
+    }
+
+    const mergedMap = new Map<string, any>();
+    for (const b of neonRows) {
+      const key = b.queryId || String(b.id);
+      if (key) mergedMap.set(key, b);
+    }
+    for (const b of localBookings) {
+      const key = b.queryId || String(b.id);
+      if (key) {
+        const existing = mergedMap.get(key);
+        mergedMap.set(key, existing ? { ...existing, ...b } : b);
+      }
+    }
+
+    return c.json({ success: true, data: Array.from(mergedMap.values()) });
   });
 
   app.post('/api/public/bookings', async (c) => {
@@ -1735,18 +1816,39 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ success: true });
   });
 
-  // --- Site Bookings (Live Neon PostgreSQL Single Source of Truth) ---
+  // --- Site Bookings (Unified Neon PostgreSQL + SQLite Single Source of Truth) ---
   app.get('/api/public/site-bookings', async (c) => {
+    let neonRows: any[] = [];
     try {
       const neonSiteBookings = await neonSql.query('SELECT * FROM site_bookings ORDER BY id DESC LIMIT 500');
       if (neonSiteBookings && Array.isArray(neonSiteBookings)) {
-        return c.json({ success: true, data: neonSiteBookings });
+        neonRows = neonSiteBookings;
       }
     } catch (neonErr: any) {
-      console.warn('[API] Neon GET /site-bookings fallback:', neonErr.message);
+      console.warn('[API] Neon GET /site-bookings notice:', neonErr.message);
     }
-    const bookings = await db.select().from(tables.siteBookings);
-    return c.json({ success: true, data: bookings });
+
+    let localBookings: any[] = [];
+    try {
+      localBookings = await db.select().from(tables.siteBookings);
+    } catch (dbErr: any) {
+      console.warn('[API] Local GET /site-bookings notice:', dbErr.message);
+    }
+
+    const mergedMap = new Map<string, any>();
+    for (const b of neonRows) {
+      const key = b.queryId || String(b.id);
+      if (key) mergedMap.set(key, b);
+    }
+    for (const b of localBookings) {
+      const key = b.queryId || String(b.id);
+      if (key) {
+        const existing = mergedMap.get(key);
+        mergedMap.set(key, existing ? { ...existing, ...b } : b);
+      }
+    }
+
+    return c.json({ success: true, data: Array.from(mergedMap.values()) });
   });
 
   app.post('/api/public/site-bookings', async (c) => {
