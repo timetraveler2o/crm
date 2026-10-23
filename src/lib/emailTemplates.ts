@@ -1,5 +1,5 @@
 /**
- * Company-specific email templates for FDI, EMT, and Travelo
+ * Company-specific email templates for GSF, EMT, and Travelo
  * Each company has its own branding, colors, and signature
  */
 

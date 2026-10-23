@@ -7,10 +7,6 @@ export default defineConfig({
     uploads: { access: "private" },
   },
   preview: {
-    buckets: {
-      assets: { access: "public_read" },
-      uploads: { access: "private" },
-    },
     functions: {
       api: { name: "api", source: "./hello.ts" },
     },

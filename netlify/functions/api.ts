@@ -516,7 +516,6 @@ api.post('/public/login-verify-otp', async (c) => {
       permanentAddress: user.permanentAddress || '',
       created: user.created || '',
       modified: user.modified || '',
-      permissions,
       amadeusCreds: user.amadeusCreds ? (typeof user.amadeusCreds === 'string' ? JSON.parse(user.amadeusCreds) : user.amadeusCreds) : []
     };
 
