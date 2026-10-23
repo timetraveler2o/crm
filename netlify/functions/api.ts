@@ -7,9 +7,9 @@ const app = new Hono();
 const api = new Hono();
 
 // Neon Cloud Database Connection
-const DB_HOST = "ep-odd-hat-b4bwqvtu-pooler.c-6.us-east-2.aws.neon.tech";
+const DB_HOST = "ep-misty-sound-arkbxxkq-pooler.c-4.us-west-2.aws.neon.tech";
 const DB_USER = "neondb_owner";
-const DB_PASS = "npg_fnBYaZwdx0u5";
+const DB_PASS = "npg_gmvBZ2j8xFun";
 const DB_NAME = "neondb";
 const DEFAULT_DATABASE_URL = `postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}/${DB_NAME}?sslmode=require&channel_binding=require`;
 
@@ -2245,6 +2245,100 @@ api.delete('/public/test-results/:id', async (c) => {
   }
 });
 
+
+// ========================================================
+// 15B. SALARY TEMPLATES, PAYSLIPS, AND EXPERIENCE LETTERS (Neon Cloud Synced)
+// ========================================================
+api.get('/public/salary-templates', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT value FROM system_settings WHERE key = 'crm_salary_templates' LIMIT 1`;
+    if (rows && rows.length > 0 && rows[0].value) {
+      return c.json({ success: true, data: JSON.parse(rows[0].value) });
+    }
+  } catch (err: any) {
+    console.warn('Neon salary templates load error:', err.message);
+  }
+  return c.json({ success: true, data: [] });
+});
+
+api.post('/public/salary-templates', async (c) => {
+  try {
+    const body = await c.req.json();
+    const data = Array.isArray(body) ? body : (body.data || []);
+    const value = JSON.stringify(data);
+    const sql = getDb();
+    await sql`
+      INSERT INTO system_settings (key, value, "updatedBy", "updatedAt")
+      VALUES ('crm_salary_templates', ${value}, 'Admin', NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = NOW()
+    `;
+    return c.json({ success: true, message: 'Salary templates saved to Neon database', data });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+api.get('/public/payslips', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT value FROM system_settings WHERE key = 'crm_payslips' LIMIT 1`;
+    if (rows && rows.length > 0 && rows[0].value) {
+      return c.json({ success: true, data: JSON.parse(rows[0].value) });
+    }
+  } catch (err: any) {
+    console.warn('Neon payslips load error:', err.message);
+  }
+  return c.json({ success: true, data: [] });
+});
+
+api.post('/public/payslips', async (c) => {
+  try {
+    const body = await c.req.json();
+    const data = Array.isArray(body) ? body : (body.data || []);
+    const value = JSON.stringify(data);
+    const sql = getDb();
+    await sql`
+      INSERT INTO system_settings (key, value, "updatedBy", "updatedAt")
+      VALUES ('crm_payslips', ${value}, 'Admin', NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = NOW()
+    `;
+    return c.json({ success: true, message: 'Payslips saved to Neon database', data });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+api.get('/public/experience-letters', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT value FROM system_settings WHERE key = 'crm_experience_letters' LIMIT 1`;
+    if (rows && rows.length > 0 && rows[0].value) {
+      return c.json({ success: true, data: JSON.parse(rows[0].value) });
+    }
+  } catch (err: any) {
+    console.warn('Neon experience letters load error:', err.message);
+  }
+  return c.json({ success: true, data: [] });
+});
+
+api.post('/public/experience-letters', async (c) => {
+  try {
+    const body = await c.req.json();
+    const data = Array.isArray(body) ? body : (body.data || []);
+    const value = JSON.stringify(data);
+    const sql = getDb();
+    await sql`
+      INSERT INTO system_settings (key, value, "updatedBy", "updatedAt")
+      VALUES ('crm_experience_letters', ${value}, 'Admin', NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = NOW()
+    `;
+    return c.json({ success: true, message: 'Experience letters saved to Neon database', data });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
 // ========================================================
 // 15. PAYSLIP REQUESTS
 // ========================================================
@@ -3286,7 +3380,7 @@ const handleWebhookLeadCaptureNetlify = async (c: any) => {
                 <tr><td style="padding:4px 0;color:#64748b">Phone:</td><td style="font-weight:600">${phone || 'N/A'}</td></tr>
               </table>
             </div>
-            <p>One of our dedicated flight desk specialists is already searching the best consolidated fares and will contact you shortly.</p>
+            <p>One of our dedicated travel specialists is already searching the best consolidated fares and will contact you shortly.</p>
             <p style="margin-bottom:0">Warm regards,<br><strong>${company} Flight Operations</strong><br><span style="font-size:12px;color:#94a3b8">Powered by Get Set Flight CRM</span></p>
           </div>
         </div>

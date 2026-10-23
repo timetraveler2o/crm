@@ -91,7 +91,7 @@ export default function Updates() {
     media: [] as UpdateMedia[],
     category: 'General',
     priority: 'Normal',
-    targetRoles: 'All FDI',
+    targetRoles: 'All GSF',
   });
 
   const isMultiAdmin = isMultiCompanyAdmin();
@@ -159,7 +159,7 @@ export default function Updates() {
       const companyTargets = targets.filter(t => t.startsWith('All '));
       let targetCompany = 'All';
       if (companyTargets.length === 1) {
-        if (companyTargets[0] === 'All FDI') targetCompany = 'Get Set Flight';
+        if (companyTargets[0] === 'All GSF' || companyTargets[0] === 'All FDI') targetCompany = 'Get Set Flight';
         else if (companyTargets[0] === 'All EMT') targetCompany = 'Look Book Ticket';
         else if (companyTargets[0] === 'All Travelo') targetCompany = 'Traveloboom';
       } else if (companyTargets.length > 1) {
@@ -211,7 +211,7 @@ export default function Updates() {
       
       setShowForm(false);
       setEditId(null);
-      setForm({ title: '', content: '', media: [], category: 'General', priority: 'Normal', targetRoles: 'All FDI' });
+      setForm({ title: '', content: '', media: [], category: 'General', priority: 'Normal', targetRoles: 'All GSF' });
       fetchUpdates();
     } catch (err: any) {
       console.error('Failed to save update:', err);
@@ -359,7 +359,7 @@ export default function Updates() {
       const companyTargets = targets.filter(t => t.startsWith('All '));
       const roleTargets = targets.filter(t => !t.startsWith('All '));
       let companyMatch = companyTargets.length === 0;
-      if (companyTargets.includes('All FDI') && displayCompany === 'GSF') companyMatch = true;
+      if ((companyTargets.includes('All GSF') || companyTargets.includes('All FDI')) && displayCompany === 'GSF') companyMatch = true;
       if (companyTargets.includes('All EMT') && displayCompany === 'LBT') companyMatch = true;
       if (companyTargets.includes('All Travelo') && displayCompany === 'travelo') companyMatch = true;
       let roleMatch = roleTargets.length === 0;
@@ -434,7 +434,7 @@ export default function Updates() {
                 <History size={16} /> Deleted Logs
               </button>
               <button
-                onClick={() => { setShowForm(true); setEditId(null); setForm({ title: '', content: '', media: [], category: 'General', priority: 'Normal', targetRoles: 'All FDI' }); }}
+                onClick={() => { setShowForm(true); setEditId(null); setForm({ title: '', content: '', media: [], category: 'General', priority: 'Normal', targetRoles: 'All GSF' }); }}
                 className="flex items-center gap-2 px-5 py-3 bg-white text-purple-700 font-bold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all text-sm"
               >
                 <Plus size={16} /> New Update
@@ -814,7 +814,7 @@ export default function Updates() {
                 <p className="text-xs text-gray-400 mb-2">Select one or more audiences to send this update to</p>
                 <div className="space-y-2">
                   {[
-                    { value: 'All FDI', label: 'All Staff — Get Set Flight (FDI)', color: 'text-teal-700 bg-teal-50' },
+                    { value: 'All GSF', label: 'All Staff — Get Set Flight (GSF)', color: 'text-teal-700 bg-teal-50' },
                     { value: 'All EMT', label: 'All Staff — Look Book Ticket (EMT)', color: 'text-red-700 bg-red-50' },
                     { value: 'All Travelo', label: 'All Staff — Traveloboom (Travelo)', color: 'text-indigo-700 bg-indigo-50' },
                     { value: 'Agent', label: 'Agents Only', color: 'text-blue-700 bg-blue-50' },
@@ -836,7 +836,7 @@ export default function Updates() {
                             } else {
                               newSelected = selected.filter(v => v !== opt.value);
                             }
-                            if (newSelected.length === 0) newSelected = ['All FDI'];
+                            if (newSelected.length === 0) newSelected = ['All GSF'];
                             setForm(f => ({ ...f, targetRoles: newSelected.join(',') }));
                           }}
                           className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"

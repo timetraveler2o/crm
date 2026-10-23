@@ -134,7 +134,7 @@ export default function Dashboard() {
     const companyTargets = targets.filter((t: string) => t.startsWith('All '));
     const roleTargets = targets.filter((t: string) => !t.startsWith('All '));
     let companyMatch = companyTargets.length === 0; // if no company targets, show to all
-    if (companyTargets.includes('All FDI') && displayCompany === 'GSF') companyMatch = true;
+    if ((companyTargets.includes('All GSF') || companyTargets.includes('All FDI')) && displayCompany === 'GSF') companyMatch = true;
     if (companyTargets.includes('All EMT') && displayCompany === 'LBT') companyMatch = true;
     if (companyTargets.includes('All Travelo') && displayCompany === 'travelo') companyMatch = true;
     // Check role targeting
