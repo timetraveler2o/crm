@@ -74,6 +74,9 @@ SET NAMES utf8mb4;
   \`company\` VARCHAR(100) DEFAULT 'Get Set Flight',
   \`amadeusCreds\` LONGTEXT,
   \`permissions\` LONGTEXT,
+  \`emergencyNumber\` VARCHAR(100),
+  \`currentAddress\` LONGTEXT,
+  \`permanentAddress\` LONGTEXT,
   INDEX \`idx_user_email\` (\`email\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 

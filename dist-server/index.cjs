@@ -24615,6 +24615,9 @@ async function initMySqlTables() {
       company VARCHAR(100) DEFAULT 'Get Set Flight',
       amadeusCreds LONGTEXT,
       permissions LONGTEXT,
+      emergencyNumber VARCHAR(100),
+      currentAddress LONGTEXT,
+      permanentAddress LONGTEXT,
       INDEX idx_user_email (email)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     `CREATE TABLE IF NOT EXISTS query_statuses (
@@ -25122,9 +25125,29 @@ async function queryHostinger(sql2, params = []) {
   const pool2 = getMySqlPool();
   if (!pool2) return [];
   try {
-    const mysqlSql = sql2.replace(/\$(\d+)/g, "?");
-    const [rows] = await pool2.query(mysqlSql, params);
-    return rows;
+    let mysqlSql = sql2;
+    mysqlSql = mysqlSql.replace(/"([a-zA-Z0-9_]+)"/g, "`$1`");
+    mysqlSql = mysqlSql.replace(/\$(\d+)/g, "?");
+    const returningMatch = mysqlSql.match(/\s+RETURNING\s+([\s\S]+)$/i);
+    let isInsertWithReturning = false;
+    let tableName = "";
+    if (returningMatch) {
+      const tableMatch = mysqlSql.match(/INSERT\s+INTO\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i);
+      if (tableMatch) {
+        tableName = tableMatch[1];
+        isInsertWithReturning = true;
+      }
+      mysqlSql = mysqlSql.replace(/\s+RETURNING\s+[\s\S]+$/i, "");
+    }
+    const [result] = await pool2.query(mysqlSql, params);
+    if (isInsertWithReturning && result && result.insertId && tableName) {
+      const [newRow] = await pool2.query(`SELECT * FROM \`${tableName}\` WHERE id = ? LIMIT 1`, [result.insertId]);
+      return newRow;
+    }
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return [result];
   } catch (error) {
     console.warn("[Hostinger MySQL Query Notice]:", error.message);
     return [];

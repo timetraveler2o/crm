@@ -1,6 +1,6 @@
 -- =========================================================================
 -- Get Set Flight CRM - Complete Database Dump for Hostinger MySQL
--- Generated automatically: 2026-10-23T19:50:38.980Z
+-- Generated automatically: 2026-10-23T20:30:58.405Z
 -- Safe to import into Hostinger MySQL (Does NOT touch any WordPress tables)
 -- =========================================================================
 
@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS `users` (
   `company` VARCHAR(100) DEFAULT 'Get Set Flight',
   `amadeusCreds` LONGTEXT,
   `permissions` LONGTEXT,
+  `emergencyNumber` VARCHAR(100),
+  `currentAddress` LONGTEXT,
+  `permanentAddress` LONGTEXT,
   INDEX `idx_user_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -351,7 +354,7 @@ CREATE TABLE IF NOT EXISTS `login_activity` (
   `company` VARCHAR(100) DEFAULT 'Get Set Flight'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Dumping data for table `login_activity` (33 rows)
+-- Dumping data for table `login_activity` (35 rows)
 INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (1, 1, 'Super Admin', '10 Oct 2026, 5:36:47 PM', NULL, NULL, '127.0.0.1', 'node', 'Success', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
 INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (2, 5, 'Sales Agent', '10 Oct 2026, 5:36:59 PM', NULL, NULL, '127.0.0.1', 'node', 'Success', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
 INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (3, 3, 'Operations Manager', '10 Oct 2026, 5:37:10 PM', NULL, NULL, '127.0.0.1', 'node', 'Success', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
@@ -385,6 +388,8 @@ INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logou
 INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (39, 0, 'info@getsetflight.com', '20 Oct 2026, 2:25:13 AM', NULL, NULL, '127.0.0.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36', 'Failed (Password)', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
 INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (40, 6, 'Get Set Flight Admin', '20 Oct 2026, 2:29:19 AM', NULL, NULL, '127.0.0.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36', 'Success (2FA OTP)', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
 INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (41, 6, 'Get Set Flight Admin', NULL, NULL, NULL, NULL, 'Desktop', 'Success (2FA OTP)', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
+INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (42, 0, 'info@getsetflight.com', '24 Oct 2026, 1:24:36 AM', NULL, NULL, '127.0.0.1', 'node', 'Failed (Password)', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
+INSERT INTO `login_activity` (`id`, `user_id`, `user_name`, `login_time`, `logout_time`, `duration`, `ip_address`, `device`, `status`, `company`) VALUES (43, 0, 'test@example.com', '24 Oct 2026, 1:55:45 AM', NULL, NULL, '127.0.0.1', 'node', 'Failed (Password)', 'Get Set Flight') ON DUPLICATE KEY UPDATE id=id;
 
 -- -----------------------------------------------------
 -- Table structure for `break_logs`
@@ -463,6 +468,9 @@ CREATE TABLE IF NOT EXISTS `password_otps` (
   `created` VARCHAR(100),
   INDEX `idx_otp_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Dumping data for table `password_otps` (1 rows)
+INSERT INTO `password_otps` (`id`, `email`, `otp`, `expires`, `created`) VALUES (11, 'info@getsetflight.com', '841278', 1792785886343, '24 Oct 2026, 1:24:46 AM') ON DUPLICATE KEY UPDATE id=id;
 
 -- -----------------------------------------------------
 -- Table structure for `ip_whitelist`

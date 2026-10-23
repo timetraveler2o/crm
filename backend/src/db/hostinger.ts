@@ -24,15 +24,44 @@ export const fireAndForgetNeon = fireAndForgetHostinger;
 
 /**
  * Executes a parameterized SQL query on Hostinger MySQL
+ * Automatically adapts PostgreSQL queries (quotes, $1 placeholders, RETURNING) for MySQL compatibility.
  */
 export async function queryHostinger<T = any>(sql: string, params: any[] = []): Promise<T[]> {
   const pool = getMySqlPool();
   if (!pool) return [];
   try {
-    // Convert PostgreSQL $1, $2, etc. placeholders to MySQL ? if present
-    const mysqlSql = sql.replace(/\$(\d+)/g, '?');
-    const [rows] = await pool.query(mysqlSql, params);
-    return rows as T[];
+    let mysqlSql = sql;
+    // 1. Convert PostgreSQL double quoted identifiers "addedBy" to MySQL backticks `addedBy`
+    mysqlSql = mysqlSql.replace(/"([a-zA-Z0-9_]+)"/g, '`$1`');
+
+    // 2. Convert PostgreSQL $1, $2, etc. placeholders to MySQL ?
+    mysqlSql = mysqlSql.replace(/\$(\d+)/g, '?');
+
+    // 3. Handle RETURNING clause which is unsupported in MySQL
+    const returningMatch = mysqlSql.match(/\s+RETURNING\s+([\s\S]+)$/i);
+    let isInsertWithReturning = false;
+    let tableName = '';
+    if (returningMatch) {
+      const tableMatch = mysqlSql.match(/INSERT\s+INTO\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i);
+      if (tableMatch) {
+        tableName = tableMatch[1];
+        isInsertWithReturning = true;
+      }
+      mysqlSql = mysqlSql.replace(/\s+RETURNING\s+[\s\S]+$/i, '');
+    }
+
+    const [result]: any = await pool.query(mysqlSql, params);
+
+    // If it was an INSERT with RETURNING, fetch the created row
+    if (isInsertWithReturning && result && result.insertId && tableName) {
+      const [newRow]: any = await pool.query(`SELECT * FROM \`${tableName}\` WHERE id = ? LIMIT 1`, [result.insertId]);
+      return newRow as T[];
+    }
+
+    if (Array.isArray(result)) {
+      return result as T[];
+    }
+    return [result] as T[];
   } catch (error: any) {
     console.warn('[Hostinger MySQL Query Notice]:', error.message);
     return [];
