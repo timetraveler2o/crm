@@ -6,7 +6,11 @@ import path from 'path';
 import { initMySqlTables, getMySqlPool, isMySqlActive } from './mysql';
 
 // Local resilient storage fallback (No Turso, No Neon)
-const localDbPath = path.resolve(process.cwd(), 'sqlite.db');
+const possiblePaths = [
+  path.resolve(process.cwd(), 'backend', 'sqlite.db'),
+  path.resolve(process.cwd(), 'sqlite.db'),
+];
+const localDbPath = possiblePaths.find(p => fs.existsSync(p)) || path.resolve(process.cwd(), 'backend', 'sqlite.db');
 
 export const client = createClient({
   url: `file:${localDbPath}`,
@@ -27,8 +31,12 @@ async function autoMigrateToHostingerIfEmpty(): Promise<void> {
 
     if (userCount === 0) {
       console.log('[Hostinger MySQL Auto-Migrate] Users table is empty. Transferring all CRM data from local database...');
-      const dumpPath = path.resolve(process.cwd(), 'hostinger_crm_data.sql');
-      if (fs.existsSync(dumpPath)) {
+      const candidateDumps = [
+        path.resolve(process.cwd(), 'hostinger_crm_data.sql'),
+        path.resolve(process.cwd(), 'backend', 'hostinger_crm_data.sql'),
+      ];
+      const dumpPath = candidateDumps.find(p => fs.existsSync(p));
+      if (dumpPath) {
         const sqlContent = fs.readFileSync(dumpPath, 'utf8');
         await pool.query(sqlContent);
         console.log('[Hostinger MySQL Auto-Migrate] ✅ All CRM data successfully seeded into Hostinger MySQL!');
@@ -48,6 +56,18 @@ export const initDb = async () => {
     }
 
     // Verify local SQLite tables for dev/fallback
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS ip_whitelist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip_address TEXT,
+        description TEXT,
+        status TEXT DEFAULT 'Active',
+        added_by TEXT,
+        created TEXT,
+        company TEXT DEFAULT 'Get Set Flight'
+      );
+    `).catch(() => {});
+
     await client.execute(`
       CREATE TABLE IF NOT EXISTS payment_authorizations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

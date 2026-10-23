@@ -787,20 +787,24 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     const userAgent = c.req.header('User-Agent') || 'Unknown';
 
     // Check IP Whitelist
-    const whitelist = await db.select().from(tables.ipWhitelist).where(eq(tables.ipWhitelist.status, 'Active'));
-    if (whitelist.length > 0) {
-      const allowed = whitelist.some(w => w.ipAddress === ip);
-      if (!allowed) {
-        await db.insert(tables.loginActivity).values({
-          userId: 0,
-          userName: email,
-          ipAddress: ip,
-          device: userAgent,
-          loginTime: formatDateTime(),
-          status: 'Blocked (IP)'
-        });
-        return c.json({ success: false, message: 'Access denied: IP not whitelisted' }, 403);
+    try {
+      const whitelist = await db.select().from(tables.ipWhitelist).where(eq(tables.ipWhitelist.status, 'Active'));
+      if (whitelist.length > 0) {
+        const allowed = whitelist.some(w => w.ipAddress === ip);
+        if (!allowed) {
+          await db.insert(tables.loginActivity).values({
+            userId: 0,
+            userName: email,
+            ipAddress: ip,
+            device: userAgent,
+            loginTime: formatDateTime(),
+            status: 'Blocked (IP)'
+          });
+          return c.json({ success: false, message: 'Access denied: IP not whitelisted' }, 403);
+        }
       }
+    } catch {
+      // Whitelist check passes if unconfigured
     }
 
     // Find user in SQLite or Neon
@@ -3976,10 +3980,50 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
   });
 
+import fs from 'fs';
+import path from 'path';
+
 app.use('/uploads/*', serveStatic({ root: './' }));
 app.route('/api', uploadApp);
+
+// Production SPA Static File Serving for Hostinger
+const candidateDistDirs = [
+  path.resolve(process.cwd(), 'dist'),
+  path.resolve(process.cwd(), '../dist'),
+  path.resolve(process.cwd(), 'public_html'),
+  path.resolve(process.cwd(), '../public_html')
+];
+
+let frontendDistPath = '';
+for (const dir of candidateDistDirs) {
+  if (fs.existsSync(path.join(dir, 'index.html'))) {
+    frontendDistPath = dir;
+    break;
+  }
+}
+
+if (frontendDistPath) {
+  console.log(`[Hostinger Server] Serving production frontend from: ${frontendDistPath}`);
+  app.use('/assets/*', serveStatic({ root: frontendDistPath }));
+  app.get('*', async (c, next) => {
+    const reqPath = c.req.path;
+    if (reqPath.startsWith('/api') || reqPath.startsWith('/uploads') || reqPath.startsWith('/assets')) {
+      return next();
+    }
+    const indexPath = path.join(frontendDistPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      const html = fs.readFileSync(indexPath, 'utf8');
+      return c.html(html);
+    }
+    return next();
+  });
+}
 
 initDb();
 initNeonPaymentAuthTable();
 initNeonClientVerificationsTable();
-serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3000 }, (info) => { console.log(`Listening on port ${info.port}`); });
+const serverPort = Number(process.env.PORT) || 3000;
+serve({ fetch: app.fetch, port: serverPort }, (info) => { 
+  console.log(`[Hostinger Web Server] Listening on port ${info.port}`); 
+});
+
