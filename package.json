@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"vite\" \"cd backend && npm run dev\"",
-    "build": "vite build",
+    "build": "vite build && esbuild netlify/functions/api.ts --bundle --platform=node --target=node20 --outfile=dist-functions/api.js",
     "preview": "vite preview"
   },
   "dependencies": {
