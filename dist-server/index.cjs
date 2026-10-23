@@ -27654,7 +27654,7 @@ app.delete("/api/public/bookings/:id", async (c) => {
 app.get("/api/public/site-bookings", async (c) => {
   try {
     const neonSiteBookings = await neonSql.query("SELECT * FROM site_bookings ORDER BY id DESC LIMIT 500");
-    if (neonSiteBookings && Array.isArray(neonSiteBookings)) {
+    if (neonSiteBookings && Array.isArray(neonSiteBookings) && neonSiteBookings.length > 0) {
       return c.json({ success: true, data: neonSiteBookings });
     }
   } catch (neonErr) {
@@ -28549,7 +28549,7 @@ app.put("/api/public/attendance/:id", async (c) => {
 app.get("/api/public/attendance-sheet", async (c) => {
   try {
     const neonSheet = await neonSql.query("SELECT * FROM attendance_sheet ORDER BY id DESC");
-    if (neonSheet && Array.isArray(neonSheet)) {
+    if (neonSheet && Array.isArray(neonSheet) && neonSheet.length > 0) {
       return c.json({ success: true, data: neonSheet });
     }
   } catch (neonErr) {

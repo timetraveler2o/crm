@@ -1689,7 +1689,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.get('/api/public/site-bookings', async (c) => {
     try {
       const neonSiteBookings = await neonSql.query('SELECT * FROM site_bookings ORDER BY id DESC LIMIT 500');
-      if (neonSiteBookings && Array.isArray(neonSiteBookings)) {
+      if (neonSiteBookings && Array.isArray(neonSiteBookings) && neonSiteBookings.length > 0) {
         return c.json({ success: true, data: neonSiteBookings });
       }
     } catch (neonErr: any) {
@@ -2704,7 +2704,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.get('/api/public/attendance-sheet', async (c) => {
     try {
       const neonSheet = await neonSql.query('SELECT * FROM attendance_sheet ORDER BY id DESC');
-      if (neonSheet && Array.isArray(neonSheet)) {
+      if (neonSheet && Array.isArray(neonSheet) && neonSheet.length > 0) {
         return c.json({ success: true, data: neonSheet });
       }
     } catch (neonErr: any) {
