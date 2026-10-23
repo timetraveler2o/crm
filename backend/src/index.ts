@@ -723,13 +723,13 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   app.get('/api/public/system-settings', async (c) => {
     try {
       const rows = await queryNeon('SELECT key, value, description FROM system_settings');
-      const settings: Record<string, string> = {};
+      const settings: Record<string, string> = { login_otp_enabled: 'false' };
       (rows || []).forEach((r: any) => {
         settings[r.key] = r.value;
       });
       return c.json({ success: true, data: settings });
     } catch (err: any) {
-      return c.json({ success: false, message: err.message, data: { login_otp_enabled: 'true' } }, 500);
+      return c.json({ success: false, message: err.message, data: { login_otp_enabled: 'false' } }, 500);
     }
   });
 
@@ -853,12 +853,15 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
       return c.json({ success: false, message: 'Your account has been deactivated. Please contact your administrator.' }, 403);
     }
 
-    // Check if 2FA OTP is enabled in system settings
-    let otpRequired = true;
+    // Check if 2FA OTP is enabled in system settings (Default: OFF)
+    let otpRequired = false;
     try {
       const setting = await neonSql.query("SELECT value FROM system_settings WHERE key = 'login_otp_enabled' LIMIT 1");
-      if (setting && setting.length > 0 && String(setting[0].value).toLowerCase() === 'false') {
-        otpRequired = false;
+      if (setting && setting.length > 0) {
+        const val = String(setting[0].value || '').toLowerCase();
+        if (val === 'true' || val === '1' || val === 'enabled') {
+          otpRequired = true;
+        }
       }
     } catch {}
 

@@ -82,7 +82,7 @@ interface CrmState {
 export const useCrmStore = create<CrmState>()(persist((set, get) => ({
   roles: [],
   auditLogs: [],
-  systemSettings: { login_otp_enabled: 'true' },
+  systemSettings: { login_otp_enabled: 'false' },
   users: [],
   queryStatuses: [],
   bookings: [],
@@ -245,7 +245,7 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       const res = await client.api.fetch('/api/public/system-settings');
       if (res.ok) {
         const d = await res.json();
-        set({ systemSettings: d.data || { login_otp_enabled: 'true' } });
+        set({ systemSettings: d.data || { login_otp_enabled: 'false' } });
       }
     } catch (e) {
       console.warn('Failed to fetch system settings:', e);

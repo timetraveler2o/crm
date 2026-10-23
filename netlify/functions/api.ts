@@ -244,13 +244,13 @@ api.get('/public/system-settings', async (c) => {
   try {
     const sql = getDb();
     const rows = await sql`SELECT key, value, description FROM system_settings`;
-    const settings: Record<string, string> = {};
+    const settings: Record<string, string> = { login_otp_enabled: 'false' };
     rows.forEach((r: any) => {
       settings[r.key] = r.value;
     });
     return c.json({ success: true, data: settings });
   } catch (err: any) {
-    return c.json({ success: false, message: err.message, data: { login_otp_enabled: 'true' } }, 500);
+    return c.json({ success: false, message: err.message, data: { login_otp_enabled: 'false' } }, 500);
   }
 });
 
@@ -311,14 +311,19 @@ api.post('/public/login-request', async (c) => {
       return c.json({ success: false, message: 'Account is inactive. Contact administrator.' }, 403);
     }
 
-    // Check if 2FA OTP is required globally or for this user
-    let otpRequired = true;
+    // Check if 2FA OTP is required globally or for this user (Default: OFF)
+    let otpRequired = false;
     try {
       const settingRows = await sql`SELECT value FROM system_settings WHERE key = 'login_otp_enabled' LIMIT 1`;
-      if (settingRows.length > 0 && settingRows[0].value === 'false') {
-        otpRequired = false;
+      if (settingRows.length > 0) {
+        const val = String(settingRows[0].value || '').toLowerCase();
+        if (val === 'true' || val === '1' || val === 'enabled') {
+          otpRequired = true;
+        }
       }
-      if (user.otp_enabled === false) {
+      if (user.otp_enabled === true) {
+        otpRequired = true;
+      } else if (user.otp_enabled === false) {
         otpRequired = false;
       }
     } catch (e) {

@@ -23494,13 +23494,13 @@ api.get("/public/system-settings", async (c) => {
   try {
     const sql = getDb();
     const rows = await sql`SELECT key, value, description FROM system_settings`;
-    const settings = {};
+    const settings = { login_otp_enabled: "false" };
     rows.forEach((r) => {
       settings[r.key] = r.value;
     });
     return c.json({ success: true, data: settings });
   } catch (err) {
-    return c.json({ success: false, message: err.message, data: { login_otp_enabled: "true" } }, 500);
+    return c.json({ success: false, message: err.message, data: { login_otp_enabled: "false" } }, 500);
   }
 });
 api.post("/public/system-settings", async (c) => {
@@ -23550,13 +23550,18 @@ api.post("/public/login-request", async (c) => {
     if (user.status && user.status.toLowerCase() === "inactive") {
       return c.json({ success: false, message: "Account is inactive. Contact administrator." }, 403);
     }
-    let otpRequired = true;
+    let otpRequired = false;
     try {
       const settingRows = await sql`SELECT value FROM system_settings WHERE key = 'login_otp_enabled' LIMIT 1`;
-      if (settingRows.length > 0 && settingRows[0].value === "false") {
-        otpRequired = false;
+      if (settingRows.length > 0) {
+        const val = String(settingRows[0].value || "").toLowerCase();
+        if (val === "true" || val === "1" || val === "enabled") {
+          otpRequired = true;
+        }
       }
-      if (user.otp_enabled === false) {
+      if (user.otp_enabled === true) {
+        otpRequired = true;
+      } else if (user.otp_enabled === false) {
         otpRequired = false;
       }
     } catch (e) {

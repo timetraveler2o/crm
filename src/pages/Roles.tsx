@@ -122,8 +122,8 @@ export default function Roles() {
   const canManageRoles = isMasterAdmin || ['hr', 'hr (human resource)'].includes((currentUser?.role || '').toLowerCase()) ||
     (currentUser?.permissions || []).includes('Role Management');
 
-  // 2FA OTP Toggle Settings (Admin Only)
-  const isOtpEnabled = systemSettings?.login_otp_enabled !== 'false';
+  // 2FA OTP Toggle Settings (Admin Only) - Defaults to OFF
+  const isOtpEnabled = systemSettings?.login_otp_enabled === 'true';
   const [togglingOtp, setTogglingOtp] = useState(false);
 
   const handleToggleLoginOtp = async () => {
