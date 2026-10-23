@@ -340,6 +340,79 @@ export async function initMySqlTables(): Promise<void> {
       details LONGTEXT NOT NULL,
       changes LONGTEXT,
       created VARCHAR(100) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    `CREATE TABLE IF NOT EXISTS password_otps (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      email VARCHAR(255) NOT NULL,
+      otp VARCHAR(50) NOT NULL,
+      expires BIGINT NOT NULL,
+      created VARCHAR(100),
+      INDEX idx_otp_email (email)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    `CREATE TABLE IF NOT EXISTS ip_whitelist (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ip_address VARCHAR(100),
+      description VARCHAR(255),
+      status VARCHAR(50) DEFAULT 'Active',
+      added_by VARCHAR(255),
+      created VARCHAR(100),
+      company VARCHAR(100) DEFAULT 'Get Set Flight'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    `CREATE TABLE IF NOT EXISTS payslip_requests (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      employeeName VARCHAR(255) NOT NULL,
+      employeeId VARCHAR(100),
+      company VARCHAR(100) DEFAULT 'GSF',
+      requestedMonth VARCHAR(100) NOT NULL,
+      requestDate VARCHAR(100),
+      status VARCHAR(50) DEFAULT 'Pending',
+      note LONGTEXT,
+      reviewedBy VARCHAR(255),
+      reviewedAt VARCHAR(100),
+      createdBy VARCHAR(255),
+      created VARCHAR(100)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    `CREATE TABLE IF NOT EXISTS tests (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      description LONGTEXT,
+      questions LONGTEXT,
+      createdBy VARCHAR(255),
+      createdByRole VARCHAR(100),
+      isActive INT DEFAULT 1,
+      created VARCHAR(100),
+      company VARCHAR(100) DEFAULT 'Get Set Flight'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    `CREATE TABLE IF NOT EXISTS test_results (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      testId INT NOT NULL,
+      userId INT NOT NULL,
+      userName VARCHAR(255),
+      score INT DEFAULT 0,
+      totalQuestions INT DEFAULT 0,
+      percentage REAL DEFAULT 0,
+      answers LONGTEXT,
+      completedAt VARCHAR(100)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    `CREATE TABLE IF NOT EXISTS notices (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      content LONGTEXT NOT NULL,
+      priority VARCHAR(50) DEFAULT 'Normal',
+      category VARCHAR(100) DEFAULT 'General',
+      audience VARCHAR(100) DEFAULT 'All',
+      author VARCHAR(255) NOT NULL,
+      authorRole VARCHAR(100),
+      created VARCHAR(100) NOT NULL,
+      expiresAt VARCHAR(100),
+      isActive INT DEFAULT 1,
+      company VARCHAR(100) DEFAULT 'Get Set Flight'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
   ];
 
@@ -352,3 +425,37 @@ export async function initMySqlTables(): Promise<void> {
   }
   console.log('[Hostinger MySQL] All CRM tables verified successfully in Hostinger MySQL.');
 }
+
+export function isMySqlActive(): boolean {
+  return !!(process.env.DB_NAME && (process.env.DB_USER || process.env.MYSQL_USER));
+}
+
+export async function queryMySql<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+  const p = getMySqlPool();
+  if (!p) return [];
+  const [rows] = await p.query(sql, params);
+  return rows as T[];
+}
+
+export async function executeMySql(sql: string, params: any[] = []): Promise<any> {
+  const p = getMySqlPool();
+  if (!p) return null;
+  const [result] = await p.execute(sql, params);
+  return result;
+}
+
+export async function findUserInMySql(email: string): Promise<any | null> {
+  const p = getMySqlPool();
+  if (!p) return null;
+  try {
+    const [rows]: any = await p.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1',
+      [email.trim().toLowerCase()]
+    );
+    return rows && rows.length > 0 ? rows[0] : null;
+  } catch (err: any) {
+    console.warn('[Hostinger MySQL findUser Notice]:', err.message);
+    return null;
+  }
+}
+
