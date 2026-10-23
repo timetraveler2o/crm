@@ -3,6 +3,7 @@ import { createClient } from '@libsql/client';
 import * as schema from './schema';
 import fs from 'fs';
 import path from 'path';
+import { initMySqlTables } from './mysql';
 
 // Turso LibSQL Cloud Database
 const TURSO_DEFAULT_URL = 'libsql://getsetflight-crm-getsetflight.aws-ap-south-1.turso.io';
@@ -21,6 +22,9 @@ export const db = drizzle(client, { schema });
 // Initialize tables if they don't exist
 export const initDb = async () => {
   try {
+    if (process.env.DB_NAME) {
+      await initMySqlTables().catch((e: any) => console.warn('[Hostinger MySQL Init Notice]:', e.message));
+    }
     await client.execute(`
       CREATE TABLE IF NOT EXISTS payment_authorizations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
