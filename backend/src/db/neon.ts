@@ -1,6 +1,8 @@
 import { neon } from '@neondatabase/serverless';
 
-export const NEON_DATABASE_URL = process.env.DATABASE_URL || '';
+const DEFAULT_NEON_URL = "postgresql://neondb_owner:npg_gmvBZ2j8xFun@ep-misty-sound-arkbxxkq-pooler.c-4.us-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
+const envUrl = process.env.DATABASE_URL || '';
+export const NEON_DATABASE_URL = (!envUrl || envUrl.includes('ep-odd-hat-b4bwqvtu')) ? DEFAULT_NEON_URL : envUrl;
 
 const rawNeon = NEON_DATABASE_URL ? neon(NEON_DATABASE_URL) : null;
 export const neonSql: any = Object.assign(

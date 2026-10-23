@@ -14,8 +14,11 @@ const DB_NAME = "neondb";
 const DEFAULT_DATABASE_URL = `postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}/${DB_NAME}?sslmode=require&channel_binding=require`;
 
 function getDb() {
-  const url = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || DEFAULT_DATABASE_URL;
-  return neon(url);
+  const envUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
+  if (!envUrl || envUrl.includes('ep-odd-hat-b4bwqvtu')) {
+    return neon(DEFAULT_DATABASE_URL);
+  }
+  return neon(envUrl);
 }
 
 // Brevo SMTP Relay & API Configuration
