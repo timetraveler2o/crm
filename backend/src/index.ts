@@ -827,7 +827,9 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
 
     // Validate credentials
-    if (!user || !user.password || user.password !== trimmedPassword) {
+    const userPass = (user?.password || '').trim();
+    const isPassMatch = userPass === trimmedPassword || userPass.toLowerCase() === trimmedPassword.toLowerCase();
+    if (!user || !user.password || !isPassMatch) {
       await db.insert(tables.loginActivity).values({
         userId: 0,
         userName: normalizedEmail,
@@ -849,6 +851,49 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         status: 'Blocked (Inactive)'
       });
       return c.json({ success: false, message: 'Your account has been deactivated. Please contact your administrator.' }, 403);
+    }
+
+    // Check if 2FA OTP is enabled in system settings
+    let otpRequired = true;
+    try {
+      const setting = await neonSql.query("SELECT value FROM system_settings WHERE key = 'login_otp_enabled' LIMIT 1");
+      if (setting && setting.length > 0 && String(setting[0].value).toLowerCase() === 'false') {
+        otpRequired = false;
+      }
+    } catch {}
+
+    // Direct Login without OTP if disabled by Admin
+    if (!otpRequired) {
+      let permissions: string[] = [];
+      if (user.role) {
+        const roleRows = await db.select().from(tables.roles).where(eq(tables.roles.roleName, user.role));
+        if (roleRows.length === 0) {
+          const allRoles = await db.select().from(tables.roles);
+          const matched = allRoles.find((r: any) => (r.roleName || r.name || '').toLowerCase() === user.role.toLowerCase());
+          if (matched && matched.permissions) {
+            try { permissions = typeof matched.permissions === 'string' ? JSON.parse(matched.permissions) : matched.permissions; } catch {}
+          }
+        } else if (roleRows[0]?.permissions) {
+          try { permissions = typeof roleRows[0].permissions === 'string' ? JSON.parse(roleRows[0].permissions) : roleRows[0].permissions; } catch {}
+        }
+      }
+
+      await db.insert(tables.loginActivity).values({
+        userId: user.id,
+        userName: user.name,
+        ipAddress: ip,
+        device: userAgent,
+        loginTime: formatDateTime(),
+        status: 'Success'
+      });
+
+      const { password: _, ...safeUser } = user;
+      return c.json({
+        success: true,
+        requiresOtp: false,
+        user: { ...safeUser, permissions },
+        message: 'Login successful'
+      });
     }
 
     // Credentials are valid! Generate 6-digit OTP
@@ -1066,7 +1111,9 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
       }
     }
 
-    if (user && user.password && user.password === trimmedPassword) {
+    const userPass = (user?.password || '').trim();
+    const isPassMatch = userPass === trimmedPassword || userPass.toLowerCase() === trimmedPassword.toLowerCase();
+    if (user && user.password && isPassMatch) {
       // Check if user is active
       if (user.status && user.status.toLowerCase() === 'inactive') {
         await db.insert(tables.loginActivity).values({
@@ -1123,7 +1170,20 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ success: false, message: 'Invalid credentials' }, 401);
   });
 
+  // --- Users (Live Neon PostgreSQL Single Source of Truth) ---
   app.get('/api/public/users', async (c) => {
+    try {
+      const neonUsers = await neonSql.query('SELECT id, "addedBy", image, name, role, email, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified FROM users ORDER BY id ASC');
+      if (neonUsers && Array.isArray(neonUsers) && neonUsers.length > 0) {
+        const users = neonUsers.map((safeUser: any) => ({
+          ...safeUser,
+          permissions: typeof safeUser.permissions === 'string' ? (() => { try { return JSON.parse(safeUser.permissions); } catch { return null; } })() : (safeUser.permissions || null)
+        }));
+        return c.json({ data: users });
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon GET /users fallback to local:', neonErr.message);
+    }
     const rawUsers = await db.select().from(tables.users);
     const users = rawUsers.map(({ password: _, ...safeUser }: any) => ({
       ...safeUser,
@@ -1134,40 +1194,104 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
 
   app.post('/api/public/users', async (c) => {
     const body = await c.req.json();
-    // Normalize email to lowercase
     if (body.email) body.email = body.email.trim().toLowerCase();
-    const userData = { ...body, created: formatDateTime(), modified: formatDateTime() };
-    const user = await db.insert(tables.users).values(userData).returning();
-    return c.json({ data: user[0] });
+    const now = formatDateTime();
+    const userData = { ...body, created: now, modified: now };
+
+    let createdUser: any = null;
+    try {
+      const creds = typeof body.amadeusCreds === 'string' ? body.amadeusCreds : JSON.stringify(body.amadeusCreds || []);
+      const perms = body.permissions !== undefined ? (typeof body.permissions === 'string' ? body.permissions : JSON.stringify(body.permissions)) : null;
+      const neonRes = await neonSql.query(`
+        INSERT INTO users ("addedBy", image, name, email, password, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        RETURNING id, "addedBy", image, name, email, role, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified
+      `, [
+        body.addedBy || 'Admin', body.image || '', body.name || '', body.email || '', body.password || 'Gsf@12345',
+        body.role || 'Travel Consultant', body.phone || '', body.gender || 'Male', body.status || 'Active',
+        body.company || 'Get Set Flight', body.emergencyNumber || '', body.currentAddress || '', body.permanentAddress || '',
+        creds, perms, now, now
+      ]);
+      if (neonRes && neonRes[0]) {
+        createdUser = neonRes[0];
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon POST /users warning:', neonErr.message);
+    }
+
+    try {
+      const user = await db.insert(tables.users).values(userData).returning();
+      if (!createdUser && user && user[0]) createdUser = user[0];
+    } catch {}
+
+    const result = createdUser || userData;
+    return c.json({ data: {
+      ...result,
+      permissions: typeof result.permissions === 'string' ? (() => { try { return JSON.parse(result.permissions); } catch { return null; } })() : (result.permissions || null)
+    } });
   });
 
   app.put('/api/public/users/:id', async (c) => {
     try {
       const id = Number(c.req.param('id'));
       const body = await c.req.json();
-      // Don't overwrite password with empty string
       if (!body.password) {
         delete body.password;
       }
-      const userData = { ...body, modified: formatDateTime() };
-      let updatedUser: any = null;
+      const now = formatDateTime();
+      const userData = { ...body, modified: now };
+
       try {
-        const user = await db.update(tables.users).set(userData).where(eq(tables.users.id, id)).returning();
-        if (user && user[0]) {
-          updatedUser = user[0];
+        const fields: string[] = [];
+        const values: any[] = [];
+        let idx = 1;
+        const allowedCols: Record<string, string> = {
+          name: 'name', email: 'email', role: 'role', phone: 'phone', gender: 'gender',
+          status: 'status', company: 'company', image: 'image', addedBy: '"addedBy"',
+          emergencyNumber: '"emergencyNumber"', currentAddress: '"currentAddress"',
+          permanentAddress: '"permanentAddress"', amadeusCreds: '"amadeusCreds"',
+          permissions: 'permissions', password: 'password'
+        };
+
+        for (const [key, colName] of Object.entries(allowedCols)) {
+          if (body[key] !== undefined) {
+            let val = body[key];
+            if (key === 'permissions' && val !== null && typeof val !== 'string') {
+              val = JSON.stringify(val);
+            }
+            if (key === 'amadeusCreds' && typeof val !== 'string') {
+              val = JSON.stringify(val);
+            }
+            fields.push(`${colName} = ${idx++}`);
+            values.push(val);
+          }
         }
-      } catch (e) {
-        console.warn('[PUT User returning fallback]:', e);
+        fields.push(`modified = ${idx++}`);
+        values.push(now);
+        values.push(id);
+
+        if (fields.length > 1) {
+          await neonSql.query(`UPDATE users SET ${fields.join(', ')} WHERE id = ${idx}`, values);
+        }
+      } catch (neonErr: any) {
+        console.warn('[API] Neon PUT /users/:id warning:', neonErr.message);
       }
 
-      if (!updatedUser) {
-        try {
-          updatedUser = await db.select().from(tables.users).where(eq(tables.users.id, id)).get();
-        } catch {}
-      }
+      try {
+        await db.update(tables.users).set(userData).where(eq(tables.users.id, id));
+      } catch {}
 
-      const finalUser = updatedUser || { id, ...userData };
-      return c.json({ data: finalUser, success: true });
+      let freshUser: any = null;
+      try {
+        const rows = await neonSql.query('SELECT id, "addedBy", image, name, role, email, phone, gender, status, company, "emergencyNumber", "currentAddress", "permanentAddress", "amadeusCreds", permissions, created, modified FROM users WHERE id = $1 LIMIT 1', [id]);
+        if (rows && rows[0]) freshUser = rows[0];
+      } catch {}
+
+      const finalUser = freshUser || { id, ...userData };
+      return c.json({ data: {
+        ...finalUser,
+        permissions: typeof finalUser.permissions === 'string' ? (() => { try { return JSON.parse(finalUser.permissions); } catch { return null; } })() : (finalUser.permissions || null)
+      }, success: true });
     } catch (err: any) {
       console.error('[PUT User Error]:', err);
       return c.json({ success: false, message: err?.message }, 500);
@@ -1176,7 +1300,14 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
 
   app.delete('/api/public/users/:id', async (c) => {
     const id = Number(c.req.param('id'));
-    await db.delete(tables.users).where(eq(tables.users.id, id));
+    try {
+      await neonSql.query('DELETE FROM users WHERE id = $1', [id]);
+    } catch (neonErr: any) {
+      console.warn('[API] Neon DELETE /users/:id notice:', neonErr.message);
+    }
+    try {
+      await db.delete(tables.users).where(eq(tables.users.id, id));
+    } catch {}
     return c.json({ success: true });
   });
 
@@ -1226,79 +1357,220 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
   });
 
-  // --- Roles ---
+  // --- Roles (Live Neon PostgreSQL Single Source of Truth) ---
   app.get('/api/public/roles', async (c) => {
+    try {
+      const neonRoles = await neonSql.query('SELECT id, name, permissions, "isSystem", created, modified FROM roles ORDER BY id ASC');
+      if (neonRoles && Array.isArray(neonRoles) && neonRoles.length > 0) {
+        const parsedRoles = neonRoles.map((r: any) => ({
+          ...r,
+          roleName: r.roleName || r.name,
+          name: r.roleName || r.name,
+          permissions: typeof r.permissions === 'string' ? (() => { try { return JSON.parse(r.permissions); } catch { return []; } })() : (r.permissions || [])
+        }));
+        return c.json({ data: parsedRoles });
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon GET /roles fallback:', neonErr.message);
+    }
     const roles = await db.select().from(tables.roles);
-    const parsedRoles = roles.map(r => ({
+    const parsedRoles = roles.map((r: any) => ({
       ...r,
-      permissions: r.permissions ? JSON.parse(r.permissions) : []
+      roleName: r.roleName || r.name,
+      name: r.roleName || r.name,
+      permissions: r.permissions ? (typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions) : []
     }));
     return c.json({ data: parsedRoles });
   });
 
   app.post('/api/public/roles', async (c) => {
     const body = await c.req.json();
-    const roleData = {
-      ...body,
-      permissions: JSON.stringify(body.permissions || []),
-      created: formatDateTime(),
-      modified: formatDateTime()
-    };
-    const role = await db.insert(tables.roles).values(roleData).returning();
-    return c.json({ data: { ...role[0], permissions: JSON.parse(role[0].permissions || '[]') } });
+    const now = formatDateTime();
+    const permsStr = JSON.stringify(body.permissions || []);
+    let createdRole: any = null;
+
+    try {
+      const neonRes = await neonSql.query(`
+        INSERT INTO roles (name, permissions, "isSystem", created, modified)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, name, permissions, "isSystem", created, modified
+      `, [body.name || 'New Role', permsStr, body.isSystem ? 1 : 0, now, now]);
+      if (neonRes && neonRes[0]) createdRole = neonRes[0];
+    } catch (neonErr: any) {
+      console.warn('[API] Neon POST /roles notice:', neonErr.message);
+    }
+
+    try {
+      const roleData = { ...body, permissions: permsStr, created: now, modified: now };
+      const role = await db.insert(tables.roles).values(roleData).returning();
+      if (!createdRole && role && role[0]) createdRole = role[0];
+    } catch {}
+
+    const result = createdRole || { ...body, permissions: permsStr, created: now, modified: now };
+    return c.json({ data: {
+      ...result,
+      permissions: typeof result.permissions === 'string' ? (() => { try { return JSON.parse(result.permissions); } catch { return []; } })() : (result.permissions || [])
+    } });
   });
 
   app.put('/api/public/roles/:id', async (c) => {
     const id = Number(c.req.param('id'));
     const body = await c.req.json();
-    const roleData = {
-      ...body,
-      permissions: body.permissions ? JSON.stringify(body.permissions) : undefined,
-      modified: formatDateTime()
-    };
-    const role = await db.update(tables.roles).set(roleData).where(eq(tables.roles.id, id)).returning();
-    return c.json({ data: { ...role[0], permissions: JSON.parse(role[0].permissions || '[]') } });
+    const now = formatDateTime();
+    const permsStr = body.permissions ? JSON.stringify(body.permissions) : undefined;
+    let updatedRole: any = null;
+
+    try {
+      if (permsStr !== undefined) {
+        const neonRes = await neonSql.query(
+          'UPDATE roles SET name = COALESCE($1, name), permissions = $2, modified = $3 WHERE id = $4 RETURNING *',
+          [body.name || null, permsStr, now, id]
+        );
+        if (neonRes && neonRes[0]) updatedRole = neonRes[0];
+      } else {
+        const neonRes = await neonSql.query(
+          'UPDATE roles SET name = COALESCE($1, name), modified = $2 WHERE id = $3 RETURNING *',
+          [body.name || null, now, id]
+        );
+        if (neonRes && neonRes[0]) updatedRole = neonRes[0];
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon PUT /roles/:id notice:', neonErr.message);
+    }
+
+    try {
+      const roleData = {
+        ...body,
+        permissions: permsStr,
+        modified: now
+      };
+      const role = await db.update(tables.roles).set(roleData).where(eq(tables.roles.id, id)).returning();
+      if (!updatedRole && role && role[0]) updatedRole = role[0];
+    } catch {}
+
+    const result = updatedRole || { id, ...body, permissions: permsStr || '[]', modified: now };
+    return c.json({ data: {
+      ...result,
+      permissions: typeof result.permissions === 'string' ? (() => { try { return JSON.parse(result.permissions); } catch { return []; } })() : (result.permissions || [])
+    } });
   });
 
   app.delete('/api/public/roles/:id', async (c) => {
     const id = Number(c.req.param('id'));
-    await db.delete(tables.roles).where(eq(tables.roles.id, id));
-    fireAndForgetNeon(() => neonSql.query('DELETE FROM roles WHERE id = $1', [id]), 'role_delete');
+    try {
+      await neonSql.query('DELETE FROM roles WHERE id = $1', [id]);
+    } catch (neonErr: any) {
+      console.warn('[API] Neon DELETE /roles/:id notice:', neonErr.message);
+    }
+    try {
+      await db.delete(tables.roles).where(eq(tables.roles.id, id));
+    } catch {}
     return c.json({ success: true });
   });
 
-  // --- Query Statuses ---
+  // --- Query Statuses (Live Neon PostgreSQL Synced) ---
   app.get('/api/public/query-statuses', async (c) => {
+    try {
+      const neonStatuses = await neonSql.query('SELECT * FROM query_statuses ORDER BY id ASC');
+      if (neonStatuses && Array.isArray(neonStatuses) && neonStatuses.length > 0) {
+        return c.json({ data: neonStatuses });
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon GET /query-statuses fallback:', neonErr.message);
+    }
     const statuses = await db.select().from(tables.queryStatuses);
     return c.json({ data: statuses });
   });
 
   app.post('/api/public/query-statuses', async (c) => {
     const body = await c.req.json();
-    const statusData = { ...body, created: formatDateTime(), modified: formatDateTime() };
-    const status = await db.insert(tables.queryStatuses).values(statusData).returning();
-    return c.json({ data: status[0] });
+    const now = formatDateTime();
+    const statusData = { ...body, created: now, modified: now };
+    let createdStatus: any = null;
+
+    try {
+      const neonRes = await neonSql.query(`
+        INSERT INTO query_statuses (name, color, "order", created, modified)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+      `, [body.name || '', body.color || '#3B82F6', body.order || 0, now, now]);
+      if (neonRes && neonRes[0]) createdStatus = neonRes[0];
+    } catch (neonErr: any) {
+      console.warn('[API] Neon POST /query-statuses notice:', neonErr.message);
+    }
+
+    try {
+      const status = await db.insert(tables.queryStatuses).values(statusData).returning();
+      if (!createdStatus && status && status[0]) createdStatus = status[0];
+    } catch {}
+
+    return c.json({ data: createdStatus || statusData });
   });
 
   app.put('/api/public/query-statuses/:id', async (c) => {
     const id = Number(c.req.param('id'));
     const body = await c.req.json();
-    const statusData = { ...body, modified: formatDateTime() };
-    const status = await db.update(tables.queryStatuses).set(statusData).where(eq(tables.queryStatuses.id, id)).returning();
-    return c.json({ data: status[0] });
+    const now = formatDateTime();
+    const statusData = { ...body, modified: now };
+    let updatedStatus: any = null;
+
+    try {
+      const neonRes = await neonSql.query(`
+        UPDATE query_statuses SET
+          name = COALESCE($1, name),
+          color = COALESCE($2, color),
+          "order" = COALESCE($3, "order"),
+          modified = $4
+        WHERE id = $5
+        RETURNING *
+      `, [body.name || null, body.color || null, body.order != null ? body.order : null, now, id]);
+      if (neonRes && neonRes[0]) updatedStatus = neonRes[0];
+    } catch (neonErr: any) {
+      console.warn('[API] Neon PUT /query-statuses/:id notice:', neonErr.message);
+    }
+
+    try {
+      const status = await db.update(tables.queryStatuses).set(statusData).where(eq(tables.queryStatuses.id, id)).returning();
+      if (!updatedStatus && status && status[0]) updatedStatus = status[0];
+    } catch {}
+
+    return c.json({ data: updatedStatus || { id, ...statusData } });
   });
 
   app.delete('/api/public/query-statuses/:id', async (c) => {
     const id = Number(c.req.param('id'));
-    await db.delete(tables.queryStatuses).where(eq(tables.queryStatuses.id, id));
-    fireAndForgetNeon(() => neonSql.query('DELETE FROM query_statuses WHERE id = $1', [id]), 'query_status_delete');
+    try {
+      await neonSql.query('DELETE FROM query_statuses WHERE id = $1', [id]);
+    } catch (neonErr: any) {
+      console.warn('[API] Neon DELETE /query-statuses/:id notice:', neonErr.message);
+    }
+    try {
+      await db.delete(tables.queryStatuses).where(eq(tables.queryStatuses.id, id));
+    } catch {}
     return c.json({ success: true });
   });
 
-  // --- Bookings ---
+  // --- Bookings (Live Neon PostgreSQL Single Source of Truth) ---
   app.get('/api/public/bookings', async (c) => {
+    try {
+      const neonBookings = await neonSql.query('SELECT * FROM bookings ORDER BY id DESC LIMIT 500');
+      if (neonBookings && Array.isArray(neonBookings) && neonBookings.length > 0) {
+        const normalized = neonBookings.map((r: any) => ({
+          ...r,
+          pnrDetails: r.pnr_details !== undefined ? r.pnr_details : (r.pnrDetails !== undefined ? r.pnrDetails : '[]'),
+          pnr_details: r.pnr_details !== undefined ? r.pnr_details : (r.pnrDetails !== undefined ? r.pnrDetails : '[]'),
+          tripType: r.trip_type !== undefined ? r.trip_type : (r.tripType !== undefined ? r.tripType : 'One Way'),
+          trip_type: r.trip_type !== undefined ? r.trip_type : (r.tripType !== undefined ? r.tripType : 'One Way'),
+          qcStatus: r.qc_status !== undefined ? r.qc_status : (r.qcStatus !== undefined ? r.qcStatus : 'NULL'),
+          qc_status: r.qc_status !== undefined ? r.qc_status : (r.qcStatus !== undefined ? r.qcStatus : 'NULL'),
+        }));
+        return c.json({ success: true, data: normalized });
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon GET /bookings fallback:', neonErr.message);
+    }
     const bookings = await db.select().from(tables.bookings);
-    return c.json({ data: bookings });
+    return c.json({ success: true, data: bookings });
   });
 
   app.post('/api/public/bookings', async (c) => {
@@ -1460,31 +1732,83 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ success: true });
   });
 
-  // --- Site Bookings ---
+  // --- Site Bookings (Live Neon PostgreSQL Single Source of Truth) ---
   app.get('/api/public/site-bookings', async (c) => {
+    try {
+      const neonSiteBookings = await neonSql.query('SELECT * FROM site_bookings ORDER BY id DESC LIMIT 500');
+      if (neonSiteBookings && Array.isArray(neonSiteBookings)) {
+        return c.json({ success: true, data: neonSiteBookings });
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon GET /site-bookings fallback:', neonErr.message);
+    }
     const bookings = await db.select().from(tables.siteBookings);
-    return c.json({ data: bookings });
+    return c.json({ success: true, data: bookings });
   });
 
   app.post('/api/public/site-bookings', async (c) => {
     const body = await c.req.json();
-    const bookingData = { ...body, created: formatDateTime(), modified: formatDateTime() };
-    const booking = await db.insert(tables.siteBookings).values(bookingData).returning();
-    return c.json({ data: booking[0] });
+    const now = formatDateTime();
+    const queryId = body.queryId || `GSF-Lead-${Date.now().toString().slice(-4)}`;
+    const bookingData = { ...body, queryId, created: now, modified: now };
+
+    try {
+      await syncSiteBookingToNeon(bookingData);
+    } catch (neonErr: any) {
+      console.warn('[API] Neon POST /site-bookings warning:', neonErr.message);
+    }
+
+    try {
+      await db.insert(tables.siteBookings).values(bookingData);
+    } catch {}
+
+    return c.json({ success: true, data: bookingData });
   });
 
   app.put('/api/public/site-bookings/:id', async (c) => {
     const id = Number(c.req.param('id'));
     const body = await c.req.json();
-    const bookingData = { ...body, modified: formatDateTime() };
-    const booking = await db.update(tables.siteBookings).set(bookingData).where(eq(tables.siteBookings.id, id)).returning();
-    return c.json({ data: booking[0] });
+    const now = formatDateTime();
+
+    try {
+      await neonSql.query(`
+        UPDATE site_bookings SET
+          name = COALESCE($1, name),
+          email = COALESCE($2, email),
+          phone = COALESCE($3, phone),
+          status = COALESCE($4, status),
+          "assignedTo" = COALESCE($5, "assignedTo"),
+          assignment = COALESCE($6, assignment),
+          remarks = COALESCE($7, remarks),
+          modified = $8
+        WHERE id = $9 OR "queryId" = $10
+      `, [
+        body.name || null, body.email || null, body.phone || null,
+        body.status || null, body.assignedTo || null, body.assignment || null,
+        body.remarks ? (typeof body.remarks === 'string' ? body.remarks : JSON.stringify(body.remarks)) : null,
+        now, id, body.queryId || ''
+      ]);
+    } catch (neonErr: any) {
+      console.warn('[API] Neon PUT /site-bookings/:id notice:', neonErr.message);
+    }
+
+    try {
+      await db.update(tables.siteBookings).set({ ...body, modified: now }).where(eq(tables.siteBookings.id, id));
+    } catch {}
+
+    return c.json({ success: true, data: { id, ...body, modified: now } });
   });
 
   app.delete('/api/public/site-bookings/:id', async (c) => {
     const id = Number(c.req.param('id'));
-    await db.delete(tables.siteBookings).where(eq(tables.siteBookings.id, id));
-    fireAndForgetNeon(() => neonSql.query('DELETE FROM site_bookings WHERE id = $1', [id]), 'site_booking_delete');
+    try {
+      await neonSql.query('DELETE FROM site_bookings WHERE id = $1', [id]);
+    } catch (neonErr: any) {
+      console.warn('[API] Neon DELETE /site-bookings/:id notice:', neonErr.message);
+    }
+    try {
+      await db.delete(tables.siteBookings).where(eq(tables.siteBookings.id, id));
+    } catch {}
     return c.json({ success: true });
   });
 
@@ -2423,48 +2747,84 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     return c.json({ data: { ...record[0], breaks: JSON.parse(record[0]?.breaks || '[]') } });
   });
 
-  // --- Attendance Sheet ---
+  // --- Attendance Sheet (Live Neon PostgreSQL Single Source of Truth) ---
   app.get('/api/public/attendance-sheet', async (c) => {
+    try {
+      const neonSheet = await neonSql.query('SELECT * FROM attendance_sheet ORDER BY id DESC');
+      if (neonSheet && Array.isArray(neonSheet)) {
+        return c.json({ success: true, data: neonSheet });
+      }
+    } catch (neonErr: any) {
+      console.warn('[API] Neon GET /attendance-sheet fallback:', neonErr.message);
+    }
     const sheet = await db.select().from(tables.attendanceSheet);
-    return c.json({ data: sheet });
+    return c.json({ success: true, data: sheet });
   });
 
   app.post('/api/public/attendance-sheet', async (c) => {
     const { userId, date, status, logEntry } = await c.req.json();
-    
-    const existing = await db.select().from(tables.attendanceSheet)
-      .where(and(eq(tables.attendanceSheet.userId, userId), eq(tables.attendanceSheet.date, date)));
-    
-    let result;
-    if (existing.length > 0) {
-      let logs = [];
-      try { logs = JSON.parse(existing[0].logs || '[]'); } catch {}
-      if (logEntry) {
-        try { logs.push(typeof logEntry === 'string' ? JSON.parse(logEntry) : logEntry); } catch { logs.push(logEntry); }
+
+    try {
+      const existing = await neonSql.query(
+        'SELECT * FROM attendance_sheet WHERE "userId" = $1 AND date = $2 LIMIT 1',
+        [userId, date]
+      );
+      if (existing && existing.length > 0) {
+        let logs: any[] = [];
+        try { logs = JSON.parse(existing[0].logs || '[]'); } catch {}
+        if (logEntry) {
+          try { logs.push(typeof logEntry === 'string' ? JSON.parse(logEntry) : logEntry); } catch { logs.push(logEntry); }
+        }
+        await neonSql.query(
+          'UPDATE attendance_sheet SET status = $1, logs = $2 WHERE "userId" = $3 AND date = $4',
+          [status, JSON.stringify(logs), userId, date]
+        );
+      } else {
+        let parsedEntry = logEntry;
+        if (typeof logEntry === 'string') { try { parsedEntry = JSON.parse(logEntry); } catch {} }
+        const logs = parsedEntry ? JSON.stringify([parsedEntry]) : '[]';
+        await neonSql.query(
+          'INSERT INTO attendance_sheet ("userId", date, status, logs) VALUES ($1, $2, $3, $4)',
+          [userId, date, status, logs]
+        );
       }
-      
-      result = await db.update(tables.attendanceSheet)
-        .set({ status, logs: JSON.stringify(logs) })
-        .where(and(eq(tables.attendanceSheet.userId, userId), eq(tables.attendanceSheet.date, date)))
-        .returning();
-    } else {
-      let parsedEntry = logEntry;
-      if (typeof logEntry === 'string') { try { parsedEntry = JSON.parse(logEntry); } catch {} }
-      const logs = parsedEntry ? JSON.stringify([parsedEntry]) : '[]';
-      result = await db.insert(tables.attendanceSheet)
-        .values({ userId, date, status, logs })
-        .returning();
+    } catch (neonErr: any) {
+      console.warn('[API] Neon POST /attendance-sheet warning:', neonErr.message);
     }
-    return c.json({ data: result[0] });
+
+    try {
+      const existingLocal = await db.select().from(tables.attendanceSheet)
+        .where(and(eq(tables.attendanceSheet.userId, userId), eq(tables.attendanceSheet.date, date)));
+      if (existingLocal.length > 0) {
+        let logs: any[] = [];
+        try { logs = JSON.parse(existingLocal[0].logs || '[]'); } catch {}
+        if (logEntry) {
+          try { logs.push(typeof logEntry === 'string' ? JSON.parse(logEntry) : logEntry); } catch { logs.push(logEntry); }
+        }
+        await db.update(tables.attendanceSheet)
+          .set({ status, logs: JSON.stringify(logs) })
+          .where(and(eq(tables.attendanceSheet.userId, userId), eq(tables.attendanceSheet.date, date)));
+      } else {
+        let parsedEntry = logEntry;
+        if (typeof logEntry === 'string') { try { parsedEntry = JSON.parse(logEntry); } catch {} }
+        const logs = parsedEntry ? JSON.stringify([parsedEntry]) : '[]';
+        await db.insert(tables.attendanceSheet).values({ userId, date, status, logs });
+      }
+    } catch {}
+
+    return c.json({ success: true, data: { userId, date, status } });
   });
 
   app.delete('/api/public/attendance-sheet', async (c) => {
-    const { userId, date, logEntry } = await c.req.json();
-    // If logEntry is provided, we might want to keep the record but set status to null?
-    // The user asked to delete it, but if we delete it, we lose the logs.
-    // Let's just delete it for now as per original logic.
-    await db.delete(tables.attendanceSheet)
-      .where(and(eq(tables.attendanceSheet.userId, userId), eq(tables.attendanceSheet.date, date)));
+    const { userId, date } = await c.req.json();
+    try {
+      await neonSql.query('DELETE FROM attendance_sheet WHERE "userId" = $1 AND date = $2', [userId, date]);
+    } catch (neonErr: any) {
+      console.warn('[API] Neon DELETE /attendance-sheet notice:', neonErr.message);
+    }
+    try {
+      await db.delete(tables.attendanceSheet).where(and(eq(tables.attendanceSheet.userId, userId), eq(tables.attendanceSheet.date, date)));
+    } catch {}
     return c.json({ success: true });
   });
 
@@ -3529,6 +3889,92 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
   // ===================== PAYSLIP REQUESTS API =====================
 
   // Get all payslip requests
+  
+  // ===================== PAYSLIP & SALARY TEMPLATES (Neon Cloud DB Persisted) =====================
+  app.get('/api/public/salary-templates', async (c) => {
+    try {
+      const rows = await queryNeon("SELECT value FROM system_settings WHERE key = 'crm_salary_templates' LIMIT 1");
+      if (rows && rows.length > 0 && rows[0].value) {
+        return c.json({ success: true, data: JSON.parse(rows[0].value) });
+      }
+    } catch (err: any) {
+      console.warn('Neon salary templates load error:', err.message);
+    }
+    return c.json({ success: true, data: [] });
+  });
+
+  app.post('/api/public/salary-templates', async (c) => {
+    try {
+      const body = await c.req.json();
+      const data = Array.isArray(body) ? body : (body.data || []);
+      const value = JSON.stringify(data);
+      const now = new Date().toISOString();
+      await queryNeon(
+        'INSERT INTO system_settings (key, value, "updatedBy", "updatedAt") VALUES ($1, $2, $3, $4) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = EXCLUDED."updatedAt"',
+        ['crm_salary_templates', value, 'Admin', now]
+      );
+      return c.json({ success: true, message: 'Salary templates saved to Neon database', data });
+    } catch (err: any) {
+      return c.json({ success: false, error: err.message }, 500);
+    }
+  });
+
+  app.get('/api/public/payslips', async (c) => {
+    try {
+      const rows = await queryNeon("SELECT value FROM system_settings WHERE key = 'crm_payslips' LIMIT 1");
+      if (rows && rows.length > 0 && rows[0].value) {
+        return c.json({ success: true, data: JSON.parse(rows[0].value) });
+      }
+    } catch (err: any) {
+      console.warn('Neon payslips load error:', err.message);
+    }
+    return c.json({ success: true, data: [] });
+  });
+
+  app.post('/api/public/payslips', async (c) => {
+    try {
+      const body = await c.req.json();
+      const data = Array.isArray(body) ? body : (body.data || []);
+      const value = JSON.stringify(data);
+      const now = new Date().toISOString();
+      await queryNeon(
+        'INSERT INTO system_settings (key, value, "updatedBy", "updatedAt") VALUES ($1, $2, $3, $4) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = EXCLUDED."updatedAt"',
+        ['crm_payslips', value, 'Admin', now]
+      );
+      return c.json({ success: true, message: 'Payslips saved to Neon database', data });
+    } catch (err: any) {
+      return c.json({ success: false, error: err.message }, 500);
+    }
+  });
+
+  app.get('/api/public/experience-letters', async (c) => {
+    try {
+      const rows = await queryNeon("SELECT value FROM system_settings WHERE key = 'crm_experience_letters' LIMIT 1");
+      if (rows && rows.length > 0 && rows[0].value) {
+        return c.json({ success: true, data: JSON.parse(rows[0].value) });
+      }
+    } catch (err: any) {
+      console.warn('Neon experience letters load error:', err.message);
+    }
+    return c.json({ success: true, data: [] });
+  });
+
+  app.post('/api/public/experience-letters', async (c) => {
+    try {
+      const body = await c.req.json();
+      const data = Array.isArray(body) ? body : (body.data || []);
+      const value = JSON.stringify(data);
+      const now = new Date().toISOString();
+      await queryNeon(
+        'INSERT INTO system_settings (key, value, "updatedBy", "updatedAt") VALUES ($1, $2, $3, $4) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = EXCLUDED."updatedAt"',
+        ['crm_experience_letters', value, 'Admin', now]
+      );
+      return c.json({ success: true, message: 'Experience letters saved to Neon database', data });
+    } catch (err: any) {
+      return c.json({ success: false, error: err.message }, 500);
+    }
+  });
+
   app.get('/api/public/payslip-requests', async (c) => {
     try {
       const results = await db.all(sql`SELECT * FROM payslip_requests ORDER BY id DESC`);

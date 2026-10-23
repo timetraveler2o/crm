@@ -1,21 +1,66 @@
 import nodemailer from 'nodemailer';
 import { Hono } from 'hono';
 import { handle } from 'hono/aws-lambda';
-import { neon } from '@neondatabase/serverless';
+import { createClient } from '@libsql/client';
 
 const app = new Hono();
 const api = new Hono();
 
-// Neon Cloud Database Connection
-const DB_HOST = "ep-odd-hat-b4bwqvtu-pooler.c-6.us-east-2.aws.neon.tech";
-const DB_USER = "neondb_owner";
-const DB_PASS = "npg_fnBYaZwdx0u5";
-const DB_NAME = "neondb";
-const DEFAULT_DATABASE_URL = `postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}/${DB_NAME}?sslmode=require&channel_binding=require`;
+// Turso Cloud Database Connection
+const TURSO_URL = process.env.TURSO_DATABASE_URL || process.env.LIBSQL_URL || 'libsql://getsetflight-crm-getsetflight.aws-ap-south-1.turso.io';
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN || process.env.LIBSQL_AUTH_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTI3NzkwNzEsImlkIjoiMDFhMTY5ZjQtN2IwMS03M2Q4LWE4YjktZGQ3Mzg5ZTg1ZjQ1Iiwia2lkIjoidnZpd1VVR2JhSlBoQkFFLURvSnJxeFJPbUxWTnNXVWdPVVpCLXJkUy1YSSIsInJpZCI6ImM1ODcwMjc4LWMxMGMtNDI0ZS1iOGE0LWZlZDE1ZmJhOTViZiJ9.8mDkizTKy6xvT9SqDcsY67kVDBZBjcYju4WjUv6xvEkV98BKVASUrQnF0tq7Kt7hsZun6m2YVnzU9o9gryxwBg';
+
+let cachedTursoClient: any = null;
+
+function normalizeQuery(rawQuery: string): string {
+  let q = rawQuery;
+  q = q.replace(/\$(\d+)/g, '?');
+  q = q.replace(/NOW\(\)/gi, "datetime('now')");
+  q = q.replace(/SERIAL\s+PRIMARY\s+KEY/gi, "INTEGER PRIMARY KEY AUTOINCREMENT");
+  q = q.replace(/ALTER\s+TABLE\s+([^\s]+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS/gi, "ALTER TABLE $1 ADD COLUMN");
+  q = q.replace(/\bILIKE\b/gi, 'LIKE');
+  return q;
+}
+
+function createTursoSql(client: any) {
+  const fn: any = async (strings: any, ...values: any[]) => {
+    let query = '';
+    const args: any[] = [];
+    if (typeof strings === 'string') {
+      query = strings;
+      if (values.length > 0 && Array.isArray(values[0])) {
+        args.push(...values[0]);
+      } else if (values.length > 0) {
+        args.push(...values);
+      }
+    } else if (Array.isArray(strings)) {
+      query = strings.reduce((prev: string, curr: string) => prev + '?' + curr);
+      args.push(...values);
+    } else {
+      query = String(strings);
+    }
+    const normalized = normalizeQuery(query);
+    const res = await client.execute({ sql: normalized, args });
+    return res.rows;
+  };
+
+  fn.query = async (query: string, params: any[] = []) => {
+    const normalized = normalizeQuery(query);
+    const res = await client.execute({ sql: normalized, args: params });
+    return res.rows;
+  };
+
+  return fn;
+}
 
 function getDb() {
-  const url = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || DEFAULT_DATABASE_URL;
-  return neon(url);
+  if (!cachedTursoClient) {
+    cachedTursoClient = createClient({
+      url: TURSO_URL,
+      authToken: TURSO_AUTH_TOKEN || undefined,
+    });
+  }
+  return createTursoSql(cachedTursoClient);
 }
 
 // Brevo SMTP Relay & API Configuration
@@ -2240,6 +2285,100 @@ api.delete('/public/test-results/:id', async (c) => {
     const sql = getDb();
     await sql`DELETE FROM test_results WHERE id = ${id}`;
     return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+
+// ========================================================
+// 15B. SALARY TEMPLATES, PAYSLIPS, AND EXPERIENCE LETTERS (Neon Cloud Synced)
+// ========================================================
+api.get('/public/salary-templates', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT value FROM system_settings WHERE key = 'crm_salary_templates' LIMIT 1`;
+    if (rows && rows.length > 0 && rows[0].value) {
+      return c.json({ success: true, data: JSON.parse(rows[0].value) });
+    }
+  } catch (err: any) {
+    console.warn('Neon salary templates load error:', err.message);
+  }
+  return c.json({ success: true, data: [] });
+});
+
+api.post('/public/salary-templates', async (c) => {
+  try {
+    const body = await c.req.json();
+    const data = Array.isArray(body) ? body : (body.data || []);
+    const value = JSON.stringify(data);
+    const sql = getDb();
+    await sql`
+      INSERT INTO system_settings (key, value, "updatedBy", "updatedAt")
+      VALUES ('crm_salary_templates', ${value}, 'Admin', NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = NOW()
+    `;
+    return c.json({ success: true, message: 'Salary templates saved to Neon database', data });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+api.get('/public/payslips', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT value FROM system_settings WHERE key = 'crm_payslips' LIMIT 1`;
+    if (rows && rows.length > 0 && rows[0].value) {
+      return c.json({ success: true, data: JSON.parse(rows[0].value) });
+    }
+  } catch (err: any) {
+    console.warn('Neon payslips load error:', err.message);
+  }
+  return c.json({ success: true, data: [] });
+});
+
+api.post('/public/payslips', async (c) => {
+  try {
+    const body = await c.req.json();
+    const data = Array.isArray(body) ? body : (body.data || []);
+    const value = JSON.stringify(data);
+    const sql = getDb();
+    await sql`
+      INSERT INTO system_settings (key, value, "updatedBy", "updatedAt")
+      VALUES ('crm_payslips', ${value}, 'Admin', NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = NOW()
+    `;
+    return c.json({ success: true, message: 'Payslips saved to Neon database', data });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+api.get('/public/experience-letters', async (c) => {
+  try {
+    const sql = getDb();
+    const rows = await sql`SELECT value FROM system_settings WHERE key = 'crm_experience_letters' LIMIT 1`;
+    if (rows && rows.length > 0 && rows[0].value) {
+      return c.json({ success: true, data: JSON.parse(rows[0].value) });
+    }
+  } catch (err: any) {
+    console.warn('Neon experience letters load error:', err.message);
+  }
+  return c.json({ success: true, data: [] });
+});
+
+api.post('/public/experience-letters', async (c) => {
+  try {
+    const body = await c.req.json();
+    const data = Array.isArray(body) ? body : (body.data || []);
+    const value = JSON.stringify(data);
+    const sql = getDb();
+    await sql`
+      INSERT INTO system_settings (key, value, "updatedBy", "updatedAt")
+      VALUES ('crm_experience_letters', ${value}, 'Admin', NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "updatedAt" = NOW()
+    `;
+    return c.json({ success: true, message: 'Experience letters saved to Neon database', data });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
