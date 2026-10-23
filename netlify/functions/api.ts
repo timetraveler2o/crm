@@ -1,24 +1,53 @@
 import nodemailer from 'nodemailer';
 import { Hono } from 'hono';
 import { handle } from 'hono/aws-lambda';
-import { neon } from '@neondatabase/serverless';
+import { createClient } from '@libsql/client';
 
 const app = new Hono();
 const api = new Hono();
 
-// Neon Cloud Database Connection
-const DB_HOST = "ep-misty-sound-arkbxxkq-pooler.c-4.us-west-2.aws.neon.tech";
-const DB_USER = "neondb_owner";
-const DB_PASS = "npg_gmvBZ2j8xFun";
-const DB_NAME = "neondb";
-const DEFAULT_DATABASE_URL = `postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}/${DB_NAME}?sslmode=require&channel_binding=require`;
+// Turso Cloud Database Connection (LibSQL)
+const TURSO_DEFAULT_URL = 'libsql://getsetflight-crm-getsetflight.aws-ap-south-1.turso.io';
+const TURSO_DEFAULT_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTI3NzkwNzEsImlkIjoiMDFhMTY5ZjQtN2IwMS03M2Q4LWE4YjktZGQ3Mzg5ZTg1ZjQ1Iiwia2lkIjoidnZpd1VVR2JhSlBoQkFFLURvSnJxeFJPbUxWTnNXVWdPVVpCLXJkUy1YSSIsInJpZCI6ImM1ODcwMjc4LWMxMGMtNDI0ZS1iOGE0LWZlZDE1ZmJhOTViZiJ9.8mDkizTKy6xvT9SqDcsY67kVDBZBjcYju4WjUv6xvEkV98BKVASUrQnF0tq7Kt7hsZun6m2YVnzU9o9gryxwBg';
+
+const tursoDb = createClient({
+  url: process.env.TURSO_DATABASE_URL || process.env.LIBSQL_URL || TURSO_DEFAULT_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN || process.env.LIBSQL_AUTH_TOKEN || TURSO_DEFAULT_TOKEN,
+});
+
+function createTursoSql(client: any) {
+  const fn: any = async (strings: any, ...values: any[]) => {
+    let query = '';
+    const args: any[] = [];
+    if (typeof strings === 'string') {
+      query = strings;
+      if (values.length > 0 && Array.isArray(values[0])) {
+        args.push(...values[0]);
+      } else {
+        args.push(...values);
+      }
+    } else if (Array.isArray(strings)) {
+      query = strings.reduce((prev: string, curr: string) => prev + '?' + curr);
+      args.push(...values);
+    }
+    query = query.replace(/\$(\d+)/g, '?').replace(/NOW\(\)/gi, "datetime('now')");
+    const res = await client.execute({ sql: query, args });
+    return res.rows;
+  };
+
+  fn.query = async (query: string, params: any[] = []) => {
+    let q = query.replace(/\$(\d+)/g, '?').replace(/NOW\(\)/gi, "datetime('now')");
+    const res = await client.execute({ sql: q, args: params });
+    return res.rows;
+  };
+
+  return fn;
+}
+
+const tursoSql = createTursoSql(tursoDb);
 
 function getDb() {
-  const envUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
-  if (!envUrl || envUrl.includes('ep-odd-hat-b4bwqvtu')) {
-    return neon(DEFAULT_DATABASE_URL);
-  }
-  return neon(envUrl);
+  return tursoSql;
 }
 
 // Brevo SMTP Relay & API Configuration

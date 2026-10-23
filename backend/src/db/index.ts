@@ -4,9 +4,17 @@ import * as schema from './schema';
 import fs from 'fs';
 import path from 'path';
 
-// Load local sqlite database for LibSQL (DATABASE_URL is reserved for Neon Postgres)
-const dbUrl = process.env.LIBSQL_URL || ('file:' + path.resolve(process.cwd(), 'sqlite.db'));
-export const client = createClient({ url: dbUrl });
+// Turso LibSQL Cloud Database
+const TURSO_DEFAULT_URL = 'libsql://getsetflight-crm-getsetflight.aws-ap-south-1.turso.io';
+const TURSO_DEFAULT_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTI3NzkwNzEsImlkIjoiMDFhMTY5ZjQtN2IwMS03M2Q4LWE4YjktZGQ3Mzg5ZTg1ZjQ1Iiwia2lkIjoidnZpd1VVR2JhSlBoQkFFLURvSnJxeFJPbUxWTnNXVWdPVVpCLXJkUy1YSSIsInJpZCI6ImM1ODcwMjc4LWMxMGMtNDI0ZS1iOGE0LWZlZDE1ZmJhOTViZiJ9.8mDkizTKy6xvT9SqDcsY67kVDBZBjcYju4WjUv6xvEkV98BKVASUrQnF0tq7Kt7hsZun6m2YVnzU9o9gryxwBg';
+
+const dbUrl = process.env.LIBSQL_URL || process.env.TURSO_DATABASE_URL || TURSO_DEFAULT_URL;
+const dbToken = process.env.LIBSQL_AUTH_TOKEN || process.env.TURSO_AUTH_TOKEN || TURSO_DEFAULT_TOKEN;
+
+export const client = createClient({
+  url: dbUrl,
+  authToken: dbToken || undefined,
+});
 
 export const db = drizzle(client, { schema });
 
