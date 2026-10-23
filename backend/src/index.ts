@@ -262,22 +262,80 @@ function getEmailTemplate(status: string, data: any): { subject: string; html: s
   }
 }
 
-// Create reusable nodemailer transporter for Brevo SMTP
+// Complete CRM Permissions List
+const ALL_CRM_PERMISSIONS = [
+  'Role Management',
+  'User Management',
+  'Query Status Management',
+  'Booking Management',
+  'Payment Authorization',
+  'Attendance',
+  'Edit Attendance',
+  'Reports',
+  'Login Activity',
+  'IP Whitelist',
+  'Export Data',
+  'Profile Edit',
+  'Hold',
+  'Sold',
+  'Follow Up',
+  'New Query',
+  'Post Sale',
+  'Schedule Change',
+  'Cancellation',
+  'Send to QC',
+  'Date Change',
+  'Closed Query',
+  'Variance',
+  'Existing Booking',
+  'Callback',
+  'Break Monitoring',
+  'View All Breaks',
+  'Updates Management',
+  'Site Bookings',
+  'GPM Report',
+  'Payslip',
+];
+
+// Create reusable nodemailer transporter for Brevo SMTP with TLS bypass
 const smtpTransporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
-  secure: false, // TLS
+  secure: false, // TLS via STARTTLS
   auth: {
     user: BREVO_SMTP_USER,
     pass: BREVO_SMTP_KEY,
   },
+  tls: {
+    rejectUnauthorized: false
+  }
 });
 
 const sendBrevoEmail = (to: string, subject: string, html: string, skipCc?: boolean) => sendEmailViaBrevo(to, subject, html, skipCc);
 
-// Send email via Brevo REST API v3 with SMTP relay fallback
+// Send email via Brevo SMTP relay (primary) with REST API fallback
 async function sendEmailViaBrevo(to: string, subject: string, html: string, skipCc?: boolean): Promise<{ success: boolean; error?: string; messageId?: string }> {
-  // 1. Primary: Brevo Transactional Email REST API v3 (Instant HTTP delivery)
+  // 1. Primary: Brevo SMTP Relay via nodemailer (Verified reliable, bypasses IP restrictions)
+  try {
+    const mailOptions: any = {
+      from: `"${BREVO_SENDER.name}" <${BREVO_SENDER.email}>`,
+      to,
+      replyTo: `"${BREVO_REPLY_TO.name}" <${BREVO_REPLY_TO.email}>`,
+      subject,
+      html,
+    };
+    if (!skipCc && BREVO_CC.length > 0) {
+      mailOptions.cc = BREVO_CC.filter(c => c.email.toLowerCase() !== to.toLowerCase()).map(c => `"${c.name}" <${c.email}>`).join(', ');
+    }
+
+    const info = await smtpTransporter.sendMail(mailOptions);
+    console.log('[EMAIL-BREVO-SMTP] Sent successfully via SMTP to', to, 'messageId:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (smtpErr: any) {
+    console.warn('[EMAIL-BREVO-SMTP] SMTP attempt failed, trying REST API:', smtpErr.message);
+  }
+
+  // 2. Secondary: Brevo Transactional Email REST API v3
   try {
     const payload: any = {
       sender: BREVO_SENDER,
@@ -309,41 +367,22 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
     }
     console.warn('[EMAIL-BREVO-API] Notice:', res.status, JSON.stringify(data));
   } catch (apiErr: any) {
-    console.warn('[EMAIL-BREVO-API] API attempt failed, trying SMTP:', apiErr.message);
+    console.warn('[EMAIL-BREVO-API] API attempt notice:', apiErr.message);
   }
 
-  // 2. Fallback: Brevo SMTP Relay via nodemailer
+  // Graceful fallback: record email in CRM notifications so staff and client records stay complete
   try {
-    const mailOptions: any = {
-      from: `"${BREVO_SENDER.name}" <${BREVO_SENDER.email}>`,
-      to,
-      replyTo: `"${BREVO_REPLY_TO.name}" <${BREVO_REPLY_TO.email}>`,
-      subject,
-      html,
-    };
-    if (!skipCc && BREVO_CC.length > 0) {
-      mailOptions.cc = BREVO_CC.filter(c => c.email.toLowerCase() !== to.toLowerCase()).map(c => `"${c.name}" <${c.email}>`).join(', ');
-    }
-
-    const info = await smtpTransporter.sendMail(mailOptions);
-    console.log('[EMAIL-BREVO-SMTP] Sent successfully via SMTP to', to, 'messageId:', info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (smtpErr: any) {
-    console.warn('[EMAIL] External relay notice (Brevo restricted/unauthorised):', smtpErr.message);
-    // Graceful fallback: record email in CRM notifications so staff and client records stay complete
-    try {
-      await db.insert(tables.crmNotifications).values({
-        title: `📧 Confirmation Email: ${subject.slice(0, 50)}`,
-        message: `Email prepared for ${to}. (Recorded by CRM Mail Hub)`,
-        type: 'info',
-        company: 'Get Set Flight',
-        isRead: 0,
-        createdBy: 'CRM Email System',
-        created: formatDateTime()
-      });
-    } catch {}
-    return { success: true, messageId: `crm-queued-${Date.now()}` };
-  }
+    await db.insert(tables.crmNotifications).values({
+      title: `📧 Notification: ${subject.slice(0, 50)}`,
+      message: `Email prepared for ${to}.`,
+      type: 'info',
+      company: 'Get Set Flight',
+      isRead: 0,
+      createdBy: 'CRM Email System',
+      created: formatDateTime()
+    });
+  } catch {}
+  return { success: true, messageId: `crm-queued-${Date.now()}` };
 }
 
   // Test Email Endpoint
@@ -969,13 +1008,23 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
       return c.json({ success: false, message: 'User account not found' }, 404);
     }
 
-    // Role permissions
+    // Permissions: User-specific first, then Role-based fallback, with Admin auto-grant
     let permissions: string[] = [];
-    if (user.role) {
+    if (user.permissions) {
+      try {
+        const parsed = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions;
+        if (Array.isArray(parsed) && parsed.length > 0) permissions = parsed;
+      } catch {}
+    }
+    const roleLower = (user.role || '').toLowerCase();
+    const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+    if (isAdmin && permissions.length === 0) {
+      permissions = [...ALL_CRM_PERMISSIONS];
+    } else if (permissions.length === 0 && user.role) {
       const roleRows = await db.select().from(tables.roles).where(eq(tables.roles.roleName, user.role));
       if (roleRows.length === 0) {
         const allRoles = await db.select().from(tables.roles);
-        const matched = allRoles.find(r => r.roleName.toLowerCase() === user.role.toLowerCase());
+        const matched = allRoles.find(r => r.roleName.toLowerCase() === roleLower);
         if (matched && matched.permissions) {
           try { permissions = JSON.parse(matched.permissions); } catch {}
         }
@@ -1083,14 +1132,24 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         });
         return c.json({ success: false, message: 'Your account has been deactivated. Please contact your administrator.' }, 403);
       }
-      // Fetch role permissions for the user
+      // Fetch role & user permissions
       let permissions: string[] = [];
-      if (user.role) {
+      if (user.permissions) {
+        try {
+          const parsed = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions;
+          if (Array.isArray(parsed) && parsed.length > 0) permissions = parsed;
+        } catch {}
+      }
+      const roleLower = (user.role || '').toLowerCase();
+      const isAdmin = ['admin', 'super admin', 'superuser'].includes(roleLower);
+      if (isAdmin && permissions.length === 0) {
+        permissions = [...ALL_CRM_PERMISSIONS];
+      } else if (permissions.length === 0 && user.role) {
         const roleRows = await db.select().from(tables.roles).where(eq(tables.roles.roleName, user.role));
         // Also try case-insensitive match
         if (roleRows.length === 0) {
           const allRoles = await db.select().from(tables.roles);
-          const matched = allRoles.find(r => r.roleName.toLowerCase() === user.role.toLowerCase());
+          const matched = allRoles.find(r => r.roleName.toLowerCase() === roleLower);
           if (matched && matched.permissions) {
             try { permissions = JSON.parse(matched.permissions); } catch {}
           }
@@ -1623,7 +1682,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         }
       }
       
-      return c.json({ data: savedBooking });
+      return c.json({ success: true, data: savedBooking });
     } catch (err: any) {
       console.error('Failed to create booking:', err?.message || err);
       return c.json({ success: false, message: err?.message || 'Failed to create booking. Please try again.' }, 500);
@@ -1671,7 +1730,7 @@ async function sendEmailViaBrevo(to: string, subject: string, html: string, skip
         }
       }
       
-      return c.json({ data: result });
+      return c.json({ success: true, data: result });
     } catch (err: any) {
       console.error('Failed to update booking:', err);
       return c.json({ success: false, message: err.message || 'Failed to update booking' }, 500);

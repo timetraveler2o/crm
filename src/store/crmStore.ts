@@ -193,9 +193,14 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         });
       }
 
-      // Parse amadeusCreds JSON for each user
+      // Parse amadeusCreds and permissions JSON for each user
       const parsedUsers = (users.data || []).map((u: any) => ({
         ...u,
+        permissions: Array.isArray(u.permissions)
+          ? u.permissions
+          : (typeof u.permissions === 'string'
+              ? (() => { try { return JSON.parse(u.permissions); } catch { return []; } })()
+              : []),
         amadeusCreds: (() => {
           if (Array.isArray(u.amadeusCreds)) return u.amadeusCreds;
           if (typeof u.amadeusCreds === 'string') {
@@ -205,9 +210,19 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         })()
       }));
 
+      // Parse permissions JSON for each role
+      const parsedRoles = (roles.data || []).map((r: any) => ({
+        ...r,
+        permissions: Array.isArray(r.permissions)
+          ? r.permissions
+          : (typeof r.permissions === 'string'
+              ? (() => { try { return JSON.parse(r.permissions); } catch { return []; } })()
+              : [])
+      }));
+
       set({
         users: parsedUsers,
-        roles: roles.data || [],
+        roles: parsedRoles,
         auditLogs: auditRes?.data || [],
         bookings: (bookings.data || []).map(normalizeBooking),
         attendanceSheet: sheet.data || [],
@@ -292,12 +307,17 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         body: JSON.stringify(role),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      const raw = data.data || data.role || data || role;
       const roleData = {
-        ...data.data,
-        permissions: Array.isArray(data.data.permissions) ? data.data.permissions : (typeof data.data.permissions === 'string' ? (() => { try { return JSON.parse(data.data.permissions); } catch { return []; } })() : [])
+        ...raw,
+        permissions: Array.isArray(raw.permissions)
+          ? raw.permissions
+          : (typeof raw.permissions === 'string'
+              ? (() => { try { return JSON.parse(raw.permissions); } catch { return []; } })()
+              : (Array.isArray(role.permissions) ? role.permissions : []))
       };
-      set((s) => ({ roles: [...s.roles, roleData] }));
+      set((s) => ({ roles: [...s.roles.filter(r => r.id !== roleData.id), roleData] }));
     } catch (err) {
       console.error('Failed to add role:', err);
       throw err;
@@ -311,14 +331,17 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const updated = await res.json();
-      if (updated.data) {
-        const roleData = {
-          ...updated.data,
-          permissions: Array.isArray(updated.data.permissions) ? updated.data.permissions : (typeof updated.data.permissions === 'string' ? (() => { try { return JSON.parse(updated.data.permissions); } catch { return []; } })() : [])
-        };
-        set((s) => ({ roles: s.roles.map((r) => (r.id === id ? roleData : r)) }));
-      }
+      const updated = await res.json().catch(() => ({}));
+      const raw = updated.data || updated.role || updated || data;
+      const roleData = {
+        ...raw,
+        permissions: Array.isArray(raw.permissions)
+          ? raw.permissions
+          : (typeof raw.permissions === 'string'
+              ? (() => { try { return JSON.parse(raw.permissions); } catch { return []; } })()
+              : (Array.isArray(data.permissions) ? data.permissions : []))
+      };
+      set((s) => ({ roles: s.roles.map((r) => (r.id === id ? { ...r, ...roleData } : r)) }));
     } catch (err) {
       console.error('Failed to update role:', err);
       throw err;
@@ -337,26 +360,44 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
 
   addUser: async (user) => {
     try {
-      // Stringify amadeusCreds for backend storage
-      const payload = { ...user, amadeusCreds: JSON.stringify(user.amadeusCreds || []) };
+      // Stringify amadeusCreds and permissions for backend storage
+      const payload = {
+        ...user,
+        amadeusCreds: JSON.stringify(user.amadeusCreds || []),
+        permissions: JSON.stringify(user.permissions || [])
+      };
       const res = await client.api.fetch('/api/public/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      const parsed = { ...data.data, amadeusCreds: (() => { try { return JSON.parse(data.data.amadeusCreds || '[]'); } catch { return []; } })() };
-      set((s) => ({ users: [parsed, ...s.users] }));
+      const data = await res.json().catch(() => ({}));
+      const raw = data.data || data.user || data || user;
+      const parsed = {
+        ...raw,
+        permissions: Array.isArray(raw.permissions)
+          ? raw.permissions
+          : (() => { try { return JSON.parse(raw.permissions || '[]'); } catch { return []; } })(),
+        amadeusCreds: (() => {
+          if (Array.isArray(raw.amadeusCreds)) return raw.amadeusCreds;
+          try { return JSON.parse(raw.amadeusCreds || '[]'); } catch { return []; }
+        })()
+      };
+      set((s) => ({ users: [parsed, ...s.users.filter(u => u.id !== parsed.id)] }));
     } catch (err) {
       console.error('Failed to add user:', err);
     }
   },
   updateUser: async (id, data) => {
     try {
-      // Stringify amadeusCreds for backend storage if present
-      const payload = data.amadeusCreds !== undefined
-        ? { ...data, amadeusCreds: JSON.stringify(data.amadeusCreds) }
-        : data;
+      // Stringify amadeusCreds and permissions for backend storage if present
+      const payload: any = { ...data };
+      if (data.amadeusCreds !== undefined) {
+        payload.amadeusCreds = JSON.stringify(data.amadeusCreds);
+      }
+      if (data.permissions !== undefined) {
+        payload.permissions = JSON.stringify(data.permissions);
+      }
       const res = await client.api.fetch(`/api/public/users/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -365,25 +406,22 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
       if (!res.ok) {
         throw new Error(`Server error: ${res.status}`);
       }
-      const updated = await res.json();
-      if (updated.data) {
-        const parsed = { ...updated.data, amadeusCreds: (() => { try { return JSON.parse(updated.data?.amadeusCreds || '[]'); } catch { return []; } })() };
-        set((s) => ({ users: s.users.map((u) => (u.id === id ? parsed : u)) }));
-      } else {
-        // If backend doesn't return full data, update locally with the sent data
-        const localAmadeus = data.amadeusCreds !== undefined ? data.amadeusCreds : undefined;
-        set((s) => ({
-          users: s.users.map((u) => {
-            if (u.id !== id) return u;
-            const merged = { ...u, ...data };
-            if (localAmadeus !== undefined) merged.amadeusCreds = localAmadeus as any;
-            return merged;
-          })
-        }));
-      }
+      const updated = await res.json().catch(() => ({}));
+      const raw = updated.data || updated.user || updated || data;
+      const parsed = {
+        ...raw,
+        permissions: Array.isArray(raw.permissions)
+          ? raw.permissions
+          : (() => { try { return JSON.parse(raw.permissions || '[]'); } catch { return []; } })(),
+        amadeusCreds: (() => {
+          if (Array.isArray(raw.amadeusCreds)) return raw.amadeusCreds;
+          try { return JSON.parse(raw.amadeusCreds || '[]'); } catch { return []; }
+        })()
+      };
+      set((s) => ({ users: s.users.map((u) => (u.id === id ? { ...u, ...parsed } : u)) }));
     } catch (err) {
       console.error('Failed to update user:', err);
-      throw err; // Re-throw so callers can catch it
+      throw err;
     }
   },
   deleteUser: async (id) => {
@@ -402,8 +440,9 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(qs),
       });
-      const data = await res.json();
-      set((s) => ({ queryStatuses: [...s.queryStatuses, data.data] }));
+      const data = await res.json().catch(() => ({}));
+      const raw = data.data || data.status || data || qs;
+      set((s) => ({ queryStatuses: [...s.queryStatuses, raw] }));
     } catch (err) {
       console.error('Failed to add query status:', err);
     }
@@ -415,8 +454,9 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const updated = await res.json();
-      set((s) => ({ queryStatuses: s.queryStatuses.map((qs) => (qs.id === id ? updated.data : qs)) }));
+      const updated = await res.json().catch(() => ({}));
+      const raw = updated.data || updated.status || updated || data;
+      set((s) => ({ queryStatuses: s.queryStatuses.map((qs) => (qs.id === id ? { ...qs, ...raw } : qs)) }));
     } catch (err) {
       console.error('Failed to update query status:', err);
     }
@@ -441,14 +481,28 @@ export const useCrmStore = create<CrmState>()(persist((set, get) => ({
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.message || `Failed to save booking (${res.status})`);
       }
-      const data = await res.json();
-      if (data.data) {
-        set((s) => ({ bookings: [normalizeBooking(data.data), ...s.bookings] }));
-      } else {
-        throw new Error('Failed to save booking - no data returned');
-      }
+      const data = await res.json().catch(() => ({}));
+      const rawBooking = data.data || data.booking || (data.id ? data : null) || {
+        ...booking,
+        id: data.insertId || data.id || Date.now(),
+        queryId: data.queryId || booking.queryId || `GSF-${Date.now().toString().slice(-6)}`,
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+      };
+      const normalized = normalizeBooking(rawBooking);
+      set((s) => ({ bookings: [normalized, ...s.bookings.filter(b => b.id !== normalized.id)] }));
+      return normalized;
     } catch (err) {
       console.error('Failed to add booking:', err);
+      // Auto-fallback: keep local booking so user work is never lost
+      const fallbackBooking = normalizeBooking({
+        ...booking,
+        id: (booking as any)?.id || Date.now(),
+        queryId: booking.queryId || `GSF-${Date.now().toString().slice(-6)}`,
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+      });
+      set((s) => ({ bookings: [fallbackBooking, ...s.bookings.filter(b => b.id !== fallbackBooking.id)] }));
       throw err;
     }
   },

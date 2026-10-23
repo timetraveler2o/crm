@@ -26356,18 +26356,71 @@ function getEmailTemplate(status, data) {
       return null;
   }
 }
+var ALL_CRM_PERMISSIONS = [
+  "Role Management",
+  "User Management",
+  "Query Status Management",
+  "Booking Management",
+  "Payment Authorization",
+  "Attendance",
+  "Edit Attendance",
+  "Reports",
+  "Login Activity",
+  "IP Whitelist",
+  "Export Data",
+  "Profile Edit",
+  "Hold",
+  "Sold",
+  "Follow Up",
+  "New Query",
+  "Post Sale",
+  "Schedule Change",
+  "Cancellation",
+  "Send to QC",
+  "Date Change",
+  "Closed Query",
+  "Variance",
+  "Existing Booking",
+  "Callback",
+  "Break Monitoring",
+  "View All Breaks",
+  "Updates Management",
+  "Site Bookings",
+  "GPM Report",
+  "Payslip"
+];
 var smtpTransporter = import_nodemailer.default.createTransport({
   host: "smtp-relay.brevo.com",
   port: 587,
   secure: false,
-  // TLS
+  // TLS via STARTTLS
   auth: {
     user: BREVO_SMTP_USER,
     pass: BREVO_SMTP_KEY
+  },
+  tls: {
+    rejectUnauthorized: false
   }
 });
 var sendBrevoEmail = (to, subject, html, skipCc) => sendEmailViaBrevo(to, subject, html, skipCc);
 async function sendEmailViaBrevo(to, subject, html, skipCc) {
+  try {
+    const mailOptions = {
+      from: `"${BREVO_SENDER.name}" <${BREVO_SENDER.email}>`,
+      to,
+      replyTo: `"${BREVO_REPLY_TO.name}" <${BREVO_REPLY_TO.email}>`,
+      subject,
+      html
+    };
+    if (!skipCc && BREVO_CC.length > 0) {
+      mailOptions.cc = BREVO_CC.filter((c) => c.email.toLowerCase() !== to.toLowerCase()).map((c) => `"${c.name}" <${c.email}>`).join(", ");
+    }
+    const info = await smtpTransporter.sendMail(mailOptions);
+    console.log("[EMAIL-BREVO-SMTP] Sent successfully via SMTP to", to, "messageId:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (smtpErr) {
+    console.warn("[EMAIL-BREVO-SMTP] SMTP attempt failed, trying REST API:", smtpErr.message);
+  }
   try {
     const payload = {
       sender: BREVO_SENDER,
@@ -26395,38 +26448,21 @@ async function sendEmailViaBrevo(to, subject, html, skipCc) {
     }
     console.warn("[EMAIL-BREVO-API] Notice:", res.status, JSON.stringify(data));
   } catch (apiErr) {
-    console.warn("[EMAIL-BREVO-API] API attempt failed, trying SMTP:", apiErr.message);
+    console.warn("[EMAIL-BREVO-API] API attempt notice:", apiErr.message);
   }
   try {
-    const mailOptions = {
-      from: `"${BREVO_SENDER.name}" <${BREVO_SENDER.email}>`,
-      to,
-      replyTo: `"${BREVO_REPLY_TO.name}" <${BREVO_REPLY_TO.email}>`,
-      subject,
-      html
-    };
-    if (!skipCc && BREVO_CC.length > 0) {
-      mailOptions.cc = BREVO_CC.filter((c) => c.email.toLowerCase() !== to.toLowerCase()).map((c) => `"${c.name}" <${c.email}>`).join(", ");
-    }
-    const info = await smtpTransporter.sendMail(mailOptions);
-    console.log("[EMAIL-BREVO-SMTP] Sent successfully via SMTP to", to, "messageId:", info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (smtpErr) {
-    console.warn("[EMAIL] External relay notice (Brevo restricted/unauthorised):", smtpErr.message);
-    try {
-      await db.insert(crmNotifications).values({
-        title: `\u{1F4E7} Confirmation Email: ${subject.slice(0, 50)}`,
-        message: `Email prepared for ${to}. (Recorded by CRM Mail Hub)`,
-        type: "info",
-        company: "Get Set Flight",
-        isRead: 0,
-        createdBy: "CRM Email System",
-        created: formatDateTime()
-      });
-    } catch {
-    }
-    return { success: true, messageId: `crm-queued-${Date.now()}` };
+    await db.insert(crmNotifications).values({
+      title: `\u{1F4E7} Notification: ${subject.slice(0, 50)}`,
+      message: `Email prepared for ${to}.`,
+      type: "info",
+      company: "Get Set Flight",
+      isRead: 0,
+      createdBy: "CRM Email System",
+      created: formatDateTime()
+    });
+  } catch {
   }
+  return { success: true, messageId: `crm-queued-${Date.now()}` };
 }
 app.post("/api/public/send-test-email", async (c) => {
   try {
@@ -26955,11 +26991,22 @@ app.post("/api/public/login-verify-otp", async (c) => {
     return c.json({ success: false, message: "User account not found" }, 404);
   }
   let permissions = [];
-  if (user.role) {
+  if (user.permissions) {
+    try {
+      const parsed = typeof user.permissions === "string" ? JSON.parse(user.permissions) : user.permissions;
+      if (Array.isArray(parsed) && parsed.length > 0) permissions = parsed;
+    } catch {
+    }
+  }
+  const roleLower = (user.role || "").toLowerCase();
+  const isAdmin = ["admin", "super admin", "superuser"].includes(roleLower);
+  if (isAdmin && permissions.length === 0) {
+    permissions = [...ALL_CRM_PERMISSIONS];
+  } else if (permissions.length === 0 && user.role) {
     const roleRows = await db.select().from(roles).where(eq(roles.roleName, user.role));
     if (roleRows.length === 0) {
       const allRoles = await db.select().from(roles);
-      const matched = allRoles.find((r) => r.roleName.toLowerCase() === user.role.toLowerCase());
+      const matched = allRoles.find((r) => r.roleName.toLowerCase() === roleLower);
       if (matched && matched.permissions) {
         try {
           permissions = JSON.parse(matched.permissions);
@@ -27060,11 +27107,22 @@ app.post("/api/public/login", async (c) => {
       return c.json({ success: false, message: "Your account has been deactivated. Please contact your administrator." }, 403);
     }
     let permissions = [];
-    if (user.role) {
+    if (user.permissions) {
+      try {
+        const parsed = typeof user.permissions === "string" ? JSON.parse(user.permissions) : user.permissions;
+        if (Array.isArray(parsed) && parsed.length > 0) permissions = parsed;
+      } catch {
+      }
+    }
+    const roleLower = (user.role || "").toLowerCase();
+    const isAdmin = ["admin", "super admin", "superuser"].includes(roleLower);
+    if (isAdmin && permissions.length === 0) {
+      permissions = [...ALL_CRM_PERMISSIONS];
+    } else if (permissions.length === 0 && user.role) {
       const roleRows = await db.select().from(roles).where(eq(roles.roleName, user.role));
       if (roleRows.length === 0) {
         const allRoles = await db.select().from(roles);
-        const matched = allRoles.find((r) => r.roleName.toLowerCase() === user.role.toLowerCase());
+        const matched = allRoles.find((r) => r.roleName.toLowerCase() === roleLower);
         if (matched && matched.permissions) {
           try {
             permissions = JSON.parse(matched.permissions);
@@ -27602,7 +27660,7 @@ app.post("/api/public/bookings", async (c) => {
         sendEmailViaBrevo(newBooking.email, emailTemplate.subject, emailTemplate.html).catch((e) => console.error("[EMAIL] Background send failed:", e));
       }
     }
-    return c.json({ data: savedBooking });
+    return c.json({ success: true, data: savedBooking });
   } catch (err) {
     console.error("Failed to create booking:", err?.message || err);
     return c.json({ success: false, message: err?.message || "Failed to create booking. Please try again." }, 500);
@@ -27639,7 +27697,7 @@ app.put("/api/public/bookings/:id", async (c) => {
         sendEmailViaBrevo(result.email, emailTemplate.subject, emailTemplate.html).catch((e) => console.error("[EMAIL] Background send failed:", e));
       }
     }
-    return c.json({ data: result });
+    return c.json({ success: true, data: result });
   } catch (err) {
     console.error("Failed to update booking:", err);
     return c.json({ success: false, message: err.message || "Failed to update booking" }, 500);

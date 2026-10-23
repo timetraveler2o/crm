@@ -6,6 +6,9 @@
   RewriteRule ^api/(.*)$ api/index.php [QSA,L]
   RewriteRule ^api$ api/index.php [QSA,L]
 
+  # Allow direct access to uploaded documents and images
+  RewriteRule ^uploads/(.*)$ uploads/$1 [L]
+
   # SPA Front-Controller routing for Vite React CRM
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
