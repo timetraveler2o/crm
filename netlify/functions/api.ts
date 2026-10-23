@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { Hono } from 'hono';
 import { handle } from 'hono/aws-lambda';
-import { createClient } from '@libsql/client';
+import { createClient } from '@libsql/client/web';
 
 const app = new Hono();
 const api = new Hono();

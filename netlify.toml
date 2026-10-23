@@ -7,6 +7,9 @@
   NODE_VERSION = "20"
   NETLIFY_NEXT_PLUGIN_SKIP = "true"
 
+[functions]
+  node_bundler = "esbuild"
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
